@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Sriram Studio — Register Your Interest</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,700;1,500&family=Lato:wght@300;400;700;900&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --ink:      #1A1209;
+    --saffron:  #C8601A;
+    --gold:     #B8962E;
+    --gold-lt:  #E8D080;
+    --cream:    #FAF6EF;
+    --petal:    #F5EDE0;
+    --border:   #DDD0BC;
+    --muted:    #8A6A50;
+    --white:    #FFFFFF;
+    --success:  #2E7D52;
+    --succ-bg:  #EAF5EE;
+    --danger:   #B33A3A;
+    --radius:   12px;
+  }
+  html, body { background: var(--cream); font-family: 'Lato', sans-serif; color: var(--ink); -webkit-font-smoothing: antialiased; min-height: 100%; }
+  input, select, textarea, button { font-family: 'Lato', sans-serif; font-size: 15px; }
+
+  /* ── CONFIG NOTICE (shown only if URL not set) ── */
+  #config-notice {
+    background: #FFF3CD; border-bottom: 2px solid #F0A500;
+    padding: 14px 20px; font-size: 13px; color: #5A3E00;
+    display: none; text-align: center; line-height: 1.7;
+  }
+  #config-notice strong { color: #C8601A; }
+  #config-notice code { background: rgba(0,0,0,0.08); padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+
+  /* ── Header ── */
+  .site-header {
+    background: linear-gradient(135deg, var(--ink) 0%, #3A2010 100%);
+    padding: 28px 24px 24px; text-align: center; position: relative; overflow: hidden;
+  }
+  .site-header::before {
+    content: ''; position: absolute; top: -60px; right: -60px;
+    width: 200px; height: 200px; border-radius: 50%;
+    background: rgba(200,96,26,0.12);
+  }
+  .site-header .lotus { font-size: 44px; margin-bottom: 10px; display: block; }
+  .site-header h1 { font-family: 'Playfair Display', serif; font-size: 28px; color: var(--cream); font-weight: 700; line-height: 1.2; }
+  .site-header p.tagline { font-size: 12px; color: var(--gold-lt); letter-spacing: 0.14em; text-transform: uppercase; margin-top: 5px; }
+  .site-header p.intro { font-size: 14px; color: rgba(250,246,239,0.75); margin-top: 14px; line-height: 1.7; max-width: 420px; margin-left: auto; margin-right: auto; }
+
+  /* ── Mode Selector ── */
+  .mode-wrap { padding: 20px 16px 0; max-width: 560px; margin: 0 auto; }
+  .mode-selector {
+    display: flex; gap: 8px; background: var(--white);
+    border: 1.5px solid var(--border); border-radius: 16px; padding: 6px;
+  }
+  .mode-btn {
+    flex: 1; padding: 14px 8px; border-radius: 12px; border: none;
+    font-size: 13px; font-weight: 700; text-align: center; cursor: pointer;
+    transition: all 0.2s; background: transparent; color: var(--muted);
+  }
+  .mode-btn span { display: block; font-size: 20px; margin-bottom: 4px; }
+  .mode-btn.active { background: var(--ink); color: var(--cream); }
+
+  /* ── Form Container ── */
+  .form-wrap { max-width: 560px; margin: 0 auto; padding: 20px 16px 80px; }
+
+  /* ── Section ── */
+  .section-head {
+    font-size: 11px; font-weight: 900; letter-spacing: 0.13em; text-transform: uppercase;
+    color: var(--saffron); padding: 6px 0 13px; border-bottom: 1.5px solid var(--border);
+    margin-bottom: 18px; margin-top: 6px; display: flex; align-items: center; gap: 8px;
+  }
+
+  /* ── Fields ── */
+  .field { margin-bottom: 16px; }
+  .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  label { display: block; font-size: 11px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+  label .req { color: var(--saffron); margin-left: 3px; }
+  label .hint { font-weight: 400; text-transform: none; letter-spacing: 0; margin-left: 4px; color: #B0A090; font-size: 10px; }
+  .inp {
+    width: 100%; padding: 12px 14px; border: 1.5px solid var(--border); border-radius: 10px;
+    font-size: 15px; color: var(--ink); background: var(--white); outline: none;
+    transition: border-color 0.2s; -webkit-appearance: none;
+  }
+  .inp:focus { border-color: var(--saffron); }
+  .inp::placeholder { color: #C5B8A8; }
+  select.inp { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%238A6A50' stroke-width='1.5' fill='none'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 13px center; padding-right: 32px; }
+  textarea.inp { resize: vertical; line-height: 1.6; }
+  .field.has-error .inp { border-color: var(--danger); }
+  .err-msg { font-size: 11px; color: var(--danger); margin-top: 4px; display: none; }
+  .field.has-error .err-msg { display: block; }
+
+  /* ── Consent ── */
+  .consent-box {
+    background: var(--petal); border-radius: 10px; padding: 15px 16px;
+    font-size: 12px; color: var(--muted); line-height: 1.8; margin-bottom: 20px;
+    border-left: 3px solid var(--saffron);
+  }
+  .consent-box strong { color: var(--ink); }
+
+  /* ── Submit ── */
+  .btn-submit {
+    width: 100%; padding: 17px; border: none; cursor: pointer;
+    background: linear-gradient(135deg, var(--saffron), var(--gold));
+    color: var(--white); border-radius: var(--radius);
+    font-size: 17px; font-weight: 900; letter-spacing: 0.03em;
+    box-shadow: 0 4px 20px rgba(200,96,26,0.32); transition: opacity 0.2s;
+  }
+  .btn-submit:hover   { opacity: 0.88; }
+  .btn-submit:disabled { opacity: 0.55; cursor: not-allowed; }
+
+  /* ── Thank You Screen ── */
+  #thankyou-screen { display: none; }
+  .thankyou-wrap { max-width: 500px; margin: 40px auto; padding: 0 16px 60px; text-align: center; }
+  .thankyou-card {
+    background: var(--white); border: 1.5px solid var(--border);
+    border-radius: 20px; padding: 40px 32px; box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+  }
+  .thankyou-card .big-icon { font-size: 60px; margin-bottom: 16px; }
+  .thankyou-card h2 { font-family: 'Playfair Display', serif; font-size: 26px; color: var(--ink); margin-bottom: 12px; }
+  .thankyou-card p  { font-size: 14px; color: var(--muted); line-height: 1.8; margin-bottom: 10px; }
+  .thankyou-card .ref { background: var(--petal); border-radius: 10px; padding: 14px 20px; font-size: 13px; color: var(--muted); margin: 20px 0; }
+  .thankyou-card .ref strong { color: var(--ink); font-size: 15px; display: block; margin-bottom: 4px; }
+  .contact-strip { background: var(--ink); border-radius: 14px; padding: 18px 20px; margin-top: 20px; }
+  .contact-strip p { color: var(--gold-lt); font-size: 13px; line-height: 2; }
+  .btn-another { margin-top: 20px; padding: 13px 28px; background: var(--petal); color: var(--saffron); border: 1.5px solid var(--border); border-radius: 10px; font-size: 14px; font-weight: 700; cursor: pointer; }
+
+  /* ── Error banner ── */
+  #err-banner {
+    background: #FDEAEA; border: 1.5px solid #E8A0A0; border-radius: 10px;
+    padding: 13px 16px; font-size: 13px; color: var(--danger); font-weight: 600;
+    margin-bottom: 16px; display: none;
+  }
+
+  /* ── Footer ── */
+  .site-footer { text-align: center; padding: 20px; font-size: 11px; color: var(--muted); border-top: 1px solid var(--border); line-height: 2; }
+  .site-footer a { color: var(--saffron); text-decoration: none; }
+
+  /* ── Toast ── */
+  #toast {
+    position: fixed; top: 16px; right: 16px; z-index: 999;
+    padding: 11px 18px; border-radius: 9px; font-size: 13px; font-weight: 700;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.18); transform: translateX(120%);
+    transition: transform 0.3s cubic-bezier(.34,1.56,.64,1); max-width: 280px;
+  }
+  #toast.show { transform: translateX(0); }
+  #toast.success { background: var(--success); color: #fff; }
+  #toast.error   { background: var(--danger); color: #fff; }
+
+  @media (max-width: 380px) {
+    .field-row { grid-template-columns: 1fr; }
+    .site-header h1 { font-size: 22px; }
+  }
+</style>
+</head>
+<body>
+
+<div id="toast"></div>
+
+<!-- Config notice (shown if URL not configured) -->
+<div id="config-notice">
+  ⚠ <strong>Studio Admin:</strong> Before sharing this form, open this file in a text editor and set the
+  <code>SCRIPT_URL</code> variable at the top of the &lt;script&gt; section to your Apps Script Web App URL.
+</div>
+
+<!-- ══════════════════ REGISTRATION FORM ══════════════════ -->
+<div id="form-screen">
+
+  <!-- Header -->
+  <div class="site-header">
+    <span class="lotus">🪷</span>
+    <h1>Sriram Studio</h1>
+    <p class="tagline">An Academy for Performing Arts · Kolkata</p>
+    <p class="intro">We're delighted you're considering joining us. Please fill in the details below and our team will get in touch with you shortly.</p>
+  </div>
+
+  <!-- Mode Selector -->
+  <div class="mode-wrap">
+    <div class="mode-selector">
+      <button class="mode-btn active" onclick="setMode('admission')" id="mode-admission">
+        <span>🎓</span>New Admission
+      </button>
+      <button class="mode-btn" onclick="setMode('workshop')" id="mode-workshop">
+        <span>🎪</span>Workshop
+      </button>
+    </div>
+  </div>
+
+  <!-- Form -->
+  <div class="form-wrap">
+    <div id="err-banner"></div>
+
+    <!-- ── Student Details ────────────────── -->
+    <div class="section-head">👤 Student Details</div>
+
+    <div class="field">
+      <label>Student's Full Name <span class="req">*</span></label>
+      <input id="r-studentName" class="inp" placeholder="Full name as per school / Aadhaar" />
+      <div class="err-msg">Please enter the student's name</div>
+    </div>
+
+    <div class="field-row">
+      <div class="field">
+        <label>Date of Birth</label>
+        <input id="r-dob" class="inp" type="date" />
+      </div>
+      <div class="field">
+        <label>Gender</label>
+        <select id="r-gender" class="inp">
+          <option value="">Select</option>
+          <option>Female</option>
+          <option>Male</option>
+          <option>Other</option>
+          <option>Prefer not to say</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="field admission-only">
+      <label>School / College <span class="hint">(optional)</span></label>
+      <input id="r-school" class="inp" placeholder="Name of school or college" />
+    </div>
+
+    <!-- ── Guardian / Contact ─────────────── -->
+    <div class="section-head">👨‍👩‍👧 Parent / Guardian Details</div>
+
+    <div class="field-row">
+      <div class="field">
+        <label>Name <span class="req">*</span></label>
+        <input id="r-guardianName" class="inp" placeholder="Parent / Guardian name" />
+        <div class="err-msg">Please enter a contact name</div>
+      </div>
+      <div class="field">
+        <label>Relationship</label>
+        <select id="r-relation" class="inp">
+          <option value="">Select</option>
+          <option>Mother</option>
+          <option>Father</option>
+          <option>Self</option>
+          <option>Spouse</option>
+          <option>Guardian / Other</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="field-row">
+      <div class="field">
+        <label>Mobile Number <span class="req">*</span></label>
+        <input id="r-phone" class="inp" type="tel" placeholder="+91 XXXXX XXXXX" />
+        <div class="err-msg">Please enter a contact number</div>
+      </div>
+      <div class="field">
+        <label>WhatsApp <span class="hint">(if different)</span></label>
+        <input id="r-whatsapp" class="inp" type="tel" placeholder="Leave blank if same" />
+      </div>
+    </div>
+
+    <div class="field-row">
+      <div class="field">
+        <label>Email Address <span class="hint">(optional)</span></label>
+        <input id="r-email" class="inp" type="email" placeholder="your@email.com" />
+      </div>
+      <div class="field admission-only">
+        <label>Home Area / Locality</label>
+        <input id="r-address" class="inp" placeholder="e.g. Bhawanipur, Kolkata" />
+      </div>
+    </div>
+
+    <!-- ── Enrollment Preference ──────────── -->
+    <div class="section-head admission-only">🎓 Enrollment Preference</div>
+    <div class="section-head workshop-only" style="display:none">🎪 Workshop Details</div>
+
+    <!-- Admission fields -->
+    <div class="admission-only">
+      <div class="field">
+        <label>Preferred Centre <span class="req">*</span></label>
+        <select id="r-location" class="inp">
+          <option value="">Select a centre</option>
+          <option>Bhawanipur – 53A Girish Mukherjee Road</option>
+          <option>Wood Street – 6/4 Govind Mahal</option>
+          <option>Kankurgachi – P-328 CIT Road</option>
+        </select>
+        <div class="err-msg">Please select a centre</div>
+      </div>
+    </div>
+
+    <!-- Workshop fields -->
+    <div class="workshop-only" style="display:none">
+      <div class="field">
+        <label>Workshop Name / Topic of Interest <span class="req">*</span></label>
+        <input id="r-workshopName" class="inp" placeholder="e.g. Odissi Abhinaya Intensive, Bollywood Workshop" />
+        <div class="err-msg">Please enter the workshop name</div>
+      </div>
+      <div class="field">
+        <label>Preferred Centre</label>
+        <select id="r-workshopLocation" class="inp">
+          <option value="">Select a centre</option>
+          <option>Bhawanipur – 53A Girish Mukherjee Road</option>
+          <option>Wood Street – 6/4 Govind Mahal</option>
+          <option>Kankurgachi – P-328 CIT Road</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- ── Additional ─────────────────────── -->
+    <div class="section-head">📝 A Little More</div>
+
+    <div class="field-row">
+      <div class="field">
+        <label>How did you hear about us?</label>
+        <select id="r-hearFrom" class="inp">
+          <option value="">Select</option>
+          <option>Friend / Family Referral</option>
+          <option>Instagram / YouTube</option>
+          <option>Facebook</option>
+          <option>Google Search</option>
+          <option>Walk-in / Local Awareness</option>
+          <option>School / College</option>
+          <option>Other</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Questions / Notes <span class="hint">(optional)</span></label>
+        <textarea id="r-notes" class="inp" rows="3" placeholder="Anything you'd like us to know…"></textarea>
+      </div>
+    </div>
+
+    <!-- Consent -->
+    <div class="consent-box">
+      <strong>Note:</strong> By submitting this form, you confirm that the information provided is accurate. Sriram Studio will use your contact details solely to respond to your enquiry. Student photographs and videos taken during classes may be used for studio promotional purposes unless you opt out by informing us directly.
+    </div>
+
+    <button class="btn-submit" id="btn-submit" onclick="submitForm()">Submit Application →</button>
+
+    <div style="text-align:center; font-size:11px; color:var(--muted); margin-top:14px;">
+      Your information is kept private and used only by Sriram Studio.
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════ THANK YOU ══════════════════ -->
+<div id="thankyou-screen">
+  <div class="site-header" style="padding-bottom:20px">
+    <span class="lotus">🪷</span>
+    <h1>Sriram Studio</h1>
+    <p class="tagline">An Academy for Performing Arts · Kolkata</p>
+  </div>
+  <div class="thankyou-wrap">
+    <div class="thankyou-card">
+      <div class="big-icon">🙏</div>
+      <h2>Application Received!</h2>
+      <p>Thank you for your interest in Sriram Studio. We have received your application and our team will be in touch with you shortly.</p>
+      <div class="ref">
+        <strong id="ref-text">Reference ID: —</strong>
+        Please save this for your records.
+      </div>
+      <p style="font-size:13px">In the meantime, feel free to follow us on social media for updates on upcoming events and workshops.</p>
+      <div class="contact-strip">
+        <p>
+          📞 +91 98307 92201<br>
+          📧 sriramstudio.anjali@gmail.com<br>
+          📸 @sriramstudio.official<br>
+          🌐 sriramstudio.github.io
+        </p>
+      </div>
+    </div>
+    <button class="btn-another" onclick="resetForm()">Submit Another Application</button>
+  </div>
+  <div class="site-footer">
+    © Sriram Studio — An Academy for Performing Arts, Kolkata<br>
+    Bhawanipur · Wood Street · Kankurgachi
+  </div>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════
+//  ⚙ CONFIGURATION
+//  Paste your Apps Script Web App URL below.
+//  This is the same URL used in sriram-studio.html.
+// ══════════════════════════════════════════════════
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzRB6XQrT8lx2lgcgv9nPQ18akiRCU8x58ritJIgbjNRkKxE3FZAifMREpZ4f7ZgSWD/exec';
+// ══════════════════════════════════════════════════
+
+let currentMode = 'admission';
+
+window.onload = () => {
+  if (!SCRIPT_URL || SCRIPT_URL === 'YOUR_APPS_SCRIPT_URL_HERE') {
+    document.getElementById('config-notice').style.display = 'block';
+  }
+};
+
+// ── Mode ──────────────────────────────────────────
+function setMode(mode) {
+  currentMode = mode;
+  ['admission','workshop'].forEach(m => {
+    document.getElementById('mode-' + m).classList.toggle('active', m === mode);
+  });
+  document.querySelectorAll('.admission-only').forEach(el => el.style.display = mode === 'admission' ? '' : 'none');
+  document.querySelectorAll('.workshop-only').forEach(el => el.style.display = mode === 'workshop' ? '' : 'none');
+  clearErrors();
+}
+
+// ── Helpers ───────────────────────────────────────
+function v(id) { return (document.getElementById(id)||{}).value || ''; }
+function clearErrors() {
+  document.querySelectorAll('.field').forEach(f => f.classList.remove('has-error'));
+  document.getElementById('err-banner').style.display = 'none';
+}
+
+// ── Validate ──────────────────────────────────────
+function validate() {
+  clearErrors();
+  let ok = true;
+  const err = (id) => {
+    const f = document.getElementById(id)?.closest('.field');
+    if (f) { f.classList.add('has-error'); ok = false; }
+  };
+  if (!v('r-studentName').trim())  err('r-studentName');
+  if (!v('r-guardianName').trim()) err('r-guardianName');
+  if (!v('r-phone').trim())        err('r-phone');
+  if (currentMode === 'admission' && !v('r-location'))      err('r-location');
+  if (currentMode === 'workshop'  && !v('r-workshopName').trim()) err('r-workshopName');
+  return ok;
+}
+
+// ── Submit ────────────────────────────────────────
+async function submitForm() {
+  if (!validate()) {
+    const b = document.getElementById('err-banner');
+    b.textContent = 'Please fill in all required fields before submitting.';
+    b.style.display = 'block';
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    return;
+  }
+
+  if (!SCRIPT_URL || SCRIPT_URL === 'YOUR_APPS_SCRIPT_URL_HERE') {
+    toast('Form not configured yet. Contact the studio directly.', 'error'); return;
+  }
+
+  const btn = document.getElementById('btn-submit');
+  btn.textContent = 'Submitting…'; btn.disabled = true;
+
+  const data = {
+    mode:         currentMode === 'admission' ? 'app-admission' : 'app-workshop',
+    studentName:  v('r-studentName'),
+    dob:          v('r-dob'),
+    gender:       v('r-gender'),
+    school:       v('r-school'),
+    guardianName: v('r-guardianName'),
+    relation:     v('r-relation'),
+    phone:        v('r-phone'),
+    whatsapp:     v('r-whatsapp'),
+    email:        v('r-email'),
+    address:      v('r-address'),
+    location:     v('r-location') || v('r-workshopLocation'),
+    workshopName: v('r-workshopName'),
+    hearFrom:     v('r-hearFrom'),
+    notes:        v('r-notes'),
+  };
+
+  try {
+    const url = new URL(SCRIPT_URL);
+    url.searchParams.set('action', 'addEnrollment');
+    url.searchParams.set('data', encodeURIComponent(JSON.stringify(data)));
+    const res = await fetch(url.toString(), { redirect: 'follow' });
+    const result = await res.json();
+    if (result.error) throw new Error(result.error);
+
+    document.getElementById('ref-text').textContent =
+      `Reference: ${result.id} · ${result.enrolledAt}`;
+    document.getElementById('form-screen').style.display    = 'none';
+    document.getElementById('thankyou-screen').style.display = 'block';
+    window.scrollTo({ top: 0 });
+  } catch(e) {
+    const b = document.getElementById('err-banner');
+    b.textContent = 'We could not submit your application at this time. Please call us on +91 98307 92201 or email sriramstudio.anjali@gmail.com.';
+    b.style.display = 'block';
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    btn.textContent = 'Submit Application →'; btn.disabled = false;
+  }
+}
+
+function resetForm() {
+  document.querySelectorAll('.inp').forEach(el => el.value = '');
+  clearErrors();
+  setMode('admission');
+  document.getElementById('form-screen').style.display    = 'block';
+  document.getElementById('thankyou-screen').style.display = 'none';
+  window.scrollTo({ top: 0 });
+}
+
+function toast(msg, type) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.className = `show ${type}`;
+  clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove('show'), 3500);
+}
+</script>
+</body>
+</html>
