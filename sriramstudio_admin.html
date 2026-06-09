@@ -806,8 +806,13 @@ function setCurrentMonthYear() {
   document.getElementById('r-month').value = d.toLocaleString('en-US', { month: 'long' });
   document.getElementById('r-year').value  = d.getFullYear();
   const dr = document.getElementById('r-daterecv');
-  if (dr) dr.value = d.toISOString().split('T')[0];
-  document.getElementById('f-startDate') && (document.getElementById('f-startDate').value = d.toISOString().split('T')[0]);
+  if (dr) {
+    // Use local date (not UTC) to avoid IST timezone offset showing yesterday's date
+    const local = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    dr.value = local;
+  }
+  document.getElementById('f-startDate') && (document.getElementById('f-startDate').value =
+    `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`);
 }
 
 // ═══════════════════════════════════════════════════
@@ -1107,7 +1112,7 @@ async function generateReceipt() {
     payMode,
     upiRef:   payMode === 'UPI' ? document.getElementById('r-upiref').value : '',
     feeType:  document.getElementById('r-feetype').value || 'Monthly Fee',
-    dateReceived: document.getElementById('r-daterecv').value || new Date().toISOString().split('T')[0],
+    dateReceived: document.getElementById('r-daterecv').value || (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; })(),
     note:     (document.getElementById('r-note').value || '').trim(),
     program: '',
     location: '',
