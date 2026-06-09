@@ -638,6 +638,11 @@
           </div>
 
           <div class="field">
+            <label>Date Received <span class="req">*</span></label>
+            <input id="r-daterecv" class="inp" type="date" />
+          </div>
+
+          <div class="field">
             <label>Payment Mode <span class="req">*</span></label>
             <div class="pay-toggle">
               <button class="pay-btn active" id="pay-upi" onclick="setPayMode('UPI')">📲 UPI</button>
@@ -800,6 +805,8 @@ function setCurrentMonthYear() {
   const d = new Date();
   document.getElementById('r-month').value = d.toLocaleString('en-US', { month: 'long' });
   document.getElementById('r-year').value  = d.getFullYear();
+  const dr = document.getElementById('r-daterecv');
+  if (dr) dr.value = d.toISOString().split('T')[0];
   document.getElementById('f-startDate') && (document.getElementById('f-startDate').value = d.toISOString().split('T')[0]);
 }
 
@@ -1100,6 +1107,7 @@ async function generateReceipt() {
     payMode,
     upiRef:   payMode === 'UPI' ? document.getElementById('r-upiref').value : '',
     feeType:  document.getElementById('r-feetype').value || 'Monthly Fee',
+    dateReceived: document.getElementById('r-daterecv').value || new Date().toISOString().split('T')[0],
     note:     (document.getElementById('r-note').value || '').trim(),
     program: '',
     location: '',
@@ -1131,6 +1139,7 @@ function renderReceipt(d) {
   const rows = [
     ['Student Name', `<span class="bold">${d.studentName}</span>`],
     ['Fee Type',     d.feeType || 'Monthly Fee'],
+    ['Date Received', d.dateReceived ? new Date(d.dateReceived + 'T00:00:00').toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' }) : ''],
     ['Fee Period',   `${d.month} ${d.year}`],
     ...(d.program  ? [['Program', d.program]]  : []),
     ...(d.guardianPhone ? [['Contact', d.guardianPhone]] : []),
@@ -1194,7 +1203,7 @@ function showReceiptForm() {
   if (ft) ft.value = 'Monthly Fee';
   currentFeeType = 'Monthly Fee';
   document.getElementById('amount-words').textContent = '';
-  setCurrentMonthYear();
+  setCurrentMonthYear(); // also resets r-daterecv to today
 }
 
 async function copyReceiptText() {
@@ -1202,12 +1211,15 @@ async function copyReceiptText() {
   if (!d) return;
   const text =
     `🪷 *SRIRAM STUDIO — FEE RECEIPT*\n\n` +
-    `Receipt No: ${d.receiptNum}\nDate: ${d.issuedAt}\n\n` +
+    `Receipt No: ${d.receiptNum}\nDate Issued: ${d.issuedAt}\n\n` +
     `Student: ${d.studentName}\n` +
+    `Fee Type: ${d.feeType || 'Monthly Fee'}\n` +
+    `Date Received: ${d.dateReceived || d.issuedAt}\n` +
     `Fee Period: ${d.month} ${d.year}\n` +
     `Amount: ₹${parseInt(d.amount).toLocaleString('en-IN')} (${amountInWords(d.amount)})\n` +
-    `Payment: ${d.payMode}${d.upiRef ? ' | Ref: ' + d.upiRef : ''}\n\n` +
-    `Fee Type: ${d.feeType || 'Monthly Fee'}${d.note ? '\nNote: ' + d.note : ''}\n\n_Issued by Sriram Studio_\n📞 +91 98307 92201`;
+    `Payment: ${d.payMode}${d.upiRef ? ' | Ref: ' + d.upiRef : ''}` +
+    `${d.note ? '\nNote: ' + d.note : ''}\n\n` +
+    `_Issued by Sriram Studio_\n📞 +91 98307 92201`;
   try {
     await navigator.clipboard.writeText(text);
     const btn = document.getElementById('btn-copy-receipt');
