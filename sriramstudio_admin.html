@@ -586,6 +586,11 @@
           </div>
 
           <div class="field">
+            <label>Note <span style="font-weight:400;text-transform:none;letter-spacing:0;font-size:10px;color:#B0A090">(optional)</span></label>
+            <textarea id="r-note" class="inp" rows="2" placeholder="e.g. advance payment, balance due, specific month, etc."></textarea>
+          </div>
+
+          <div class="field">
             <label>Fee Period (Effective Month) <span class="req">*</span></label>
             <div class="field-row" style="margin-bottom:0">
               <div class="field" style="margin-bottom:0">
@@ -605,6 +610,16 @@
           </div>
 
           <div class="field">
+            <label>Fee Type <span class="req">*</span></label>
+            <select id="r-feetype" class="inp" onchange="currentFeeType=this.value">
+              <option value="Monthly Fee">Monthly Fee</option>
+              <option value="Registration Fee">Registration Fee</option>
+              <option value="Workshop">Workshop</option>
+              <option value="Other">Other</option>
+            </select>
+          </div>
+
+          <div class="field">
             <label>Payment Mode <span class="req">*</span></label>
             <div class="pay-toggle">
               <button class="pay-btn active" id="pay-upi" onclick="setPayMode('UPI')">📲 UPI</button>
@@ -615,21 +630,6 @@
           <div class="field" id="upi-ref-field">
             <label>UPI Transaction / Reference ID</label>
             <input id="r-upiref" class="inp" placeholder="Optional but recommended" style="font-family:monospace" />
-          </div>
-
-          <div class="field">
-            <label>Fee Type <span class="req">*</span></label>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;">
-              <button class="pay-btn active" id="ft-existing"         onclick="setFeeType('Monthly Fee')">📅 Monthly Fee</button>
-              <button class="pay-btn"        id="ft-new-reg"          onclick="setFeeType('New Registration')">🎓 New Registration</button>
-              <button class="pay-btn"        id="ft-re-reg"           onclick="setFeeType('Re-Registration')">🔄 Re-Registration</button>
-              <button class="pay-btn"        id="ft-workshop"         onclick="setFeeType('Workshop')">🎪 Workshop</button>
-            </div>
-          </div>
-
-          <div class="field">
-            <label>Note <span style="font-weight:400;text-transform:none;letter-spacing:0;font-size:10px;color:#B0A090">(optional)</span></label>
-            <textarea id="r-note" class="inp" rows="2" placeholder="Any additional details e.g. advance, balance, specific month etc."></textarea>
           </div>
 
           <button class="btn-primary" id="btn-gen-receipt" onclick="generateReceipt()">Generate Receipt →</button>
@@ -1019,14 +1019,23 @@ function searchStudents(q) {
       const r = await api('searchStudents', { q });
       const list = document.getElementById('student-suggestions');
       if (!r.results || r.results.length === 0) { closeSuggestions(); return; }
-      list.innerHTML = r.results.map(s =>
-        `<div class="autocomplete-item" onclick="selectStudent('${s.studentName.replace(/'/g,"\\'")}','${s.phone}','${s.program}','${s.location}')">
+      // Store results on the element to avoid string-escaping issues
+      list._results = r.results;
+      list.innerHTML = r.results.map((s, i) =>
+        `<div class="autocomplete-item" data-idx="${i}">
           <strong>${s.studentName}</strong>
-          <small>${s.program || ''} ${s.location ? '· ' + s.location.split('–')[0] : ''}</small>
+          <small>${s.program || ''} ${s.location ? '· ' + s.location.split('\u2013')[0] : ''}</small>
         </div>`
       ).join('');
+      list.querySelectorAll('.autocomplete-item').forEach(el => {
+        el.addEventListener('mousedown', e => {
+          e.preventDefault(); // prevent blur before click
+          const s = list._results[parseInt(el.dataset.idx)];
+          if (s) { selectStudent(s.studentName, s.phone, s.program, s.location); }
+        });
+      });
       list.classList.add('show');
-    } catch(e) {}
+    } catch(e) { console.error('Autocomplete error:', e); }
   }, 300);
 }
 
@@ -1064,7 +1073,7 @@ async function generateReceipt() {
     year:    document.getElementById('r-year').value,
     payMode,
     upiRef:   payMode === 'UPI' ? document.getElementById('r-upiref').value : '',
-    feeType:  currentFeeType,
+    feeType:  document.getElementById('r-feetype').value || 'Monthly Fee',
     note:     (document.getElementById('r-note').value || '').trim(),
     program: '',
     location: '',
@@ -1155,9 +1164,10 @@ function showReceiptForm() {
   document.getElementById('r-amount').value = '';
   document.getElementById('r-upiref').value = '';
   document.getElementById('r-note').value   = '';
-  document.getElementById('amount-words').textContent = '';
+  const ft = document.getElementById('r-feetype');
+  if (ft) ft.value = 'Monthly Fee';
   currentFeeType = 'Monthly Fee';
-  setFeeType('Monthly Fee');
+  document.getElementById('amount-words').textContent = '';
   setCurrentMonthYear();
 }
 
