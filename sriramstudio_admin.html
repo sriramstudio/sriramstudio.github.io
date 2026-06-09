@@ -272,9 +272,27 @@
 
   /* ── Print ───────────────────────────────────── */
   @media print {
-    body * { visibility: hidden !important; }
-    #print-target, #print-target * { visibility: visible !important; }
-    #print-target { position: fixed; top: 0; left: 0; width: 100%; padding: 20px; }
+    /* Reset page dimensions — kill blank pages from app's min-height */
+    html, body { height: auto !important; overflow: visible !important; min-height: 0 !important; background: #fff !important; }
+    /* Hide every direct child of body */
+    body > * { display: none !important; }
+    /* Show only the receipt print target — ID wins over body > * */
+    #print-target {
+      display: block !important;
+      width: 100% !important;
+      max-width: 520px !important;
+      margin: 0 auto !important;
+      padding: 12px !important;
+    }
+    /* Ensure all receipt internals render */
+    #print-target * { display: revert !important; }
+    #print-target .receipt-header-top,
+    #print-target .receipt-meta,
+    #print-target .receipt-amount-bar,
+    #print-target .receipt-row,
+    #print-target .receipt-footer { display: flex !important; }
+    /* Page settings */
+    @page { margin: 8mm; size: A4 portrait; }
   }
   @media (max-width: 380px) {
     .field-row { grid-template-columns: 1fr; }
@@ -717,7 +735,7 @@
 </div>
 
 <!-- Print target wrapper -->
-<div id="print-target" style="display:none"></div>
+<div id="print-target" style="position:absolute;left:-9999px;top:0;pointer-events:none;"></div>
 
 <script>
 // ─── Logo for receipts ───────────────────────────────────────
@@ -1018,8 +1036,11 @@ function searchStudents(q) {
     try {
       const r = await api('searchStudents', { q });
       const list = document.getElementById('student-suggestions');
-      if (!r.results || r.results.length === 0) { closeSuggestions(); return; }
-      // Store results on the element to avoid string-escaping issues
+      if (!r.results || r.results.length === 0) {
+        list.innerHTML = `<div class="autocomplete-item" style="color:var(--muted);cursor:default;font-style:italic;">No enrolled students found for "${q}"</div>`;
+        list.classList.add('show');
+        return;
+      }
       list._results = r.results;
       list.innerHTML = r.results.map((s, i) =>
         `<div class="autocomplete-item" data-idx="${i}">
@@ -1027,15 +1048,20 @@ function searchStudents(q) {
           <small>${s.program || ''} ${s.location ? '· ' + s.location.split('\u2013')[0] : ''}</small>
         </div>`
       ).join('');
-      list.querySelectorAll('.autocomplete-item').forEach(el => {
+      list.querySelectorAll('.autocomplete-item[data-idx]').forEach(el => {
         el.addEventListener('mousedown', e => {
-          e.preventDefault(); // prevent blur before click
+          e.preventDefault();
           const s = list._results[parseInt(el.dataset.idx)];
           if (s) { selectStudent(s.studentName, s.phone, s.program, s.location); }
         });
       });
       list.classList.add('show');
-    } catch(e) { console.error('Autocomplete error:', e); }
+    } catch(e) {
+      console.error('Autocomplete error:', e);
+      const list = document.getElementById('student-suggestions');
+      list.innerHTML = `<div class="autocomplete-item" style="color:var(--danger);cursor:default;font-size:12px;">Search error — check connection</div>`;
+      list.classList.add('show');
+    }
   }, 300);
 }
 
