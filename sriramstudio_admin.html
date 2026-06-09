@@ -850,6 +850,17 @@ function setMode(mode) {
   document.getElementById('form-subtitle').textContent = titles[mode][1];
   document.getElementById('btn-submit-enroll').textContent =
     isWorkshop ? 'Register for Workshop' : isLegacy ? 'Add to Records' : 'Submit Enrollment';
+
+  // Legacy: clear joining date so it doesn't auto-fill with today
+  if (isLegacy) {
+    const sd = document.getElementById('f-startDate');
+    if (sd) sd.value = '';
+  }
+  // Admission: restore today's date
+  if (isAdmission) {
+    const sd = document.getElementById('f-startDate');
+    if (sd) sd.value = new Date().toISOString().split('T')[0];
+  }
 }
 
 function val(id) { return (document.getElementById(id) || {}).value || ''; }
@@ -888,7 +899,7 @@ async function submitEnrollment() {
     email:        val('f-email'),
     address:      val('f-address'),
     location:     val('f-location') || val('f-workshopLocation'),
-    startDate:    val('f-startDate'),
+    startDate:    enrollMode === 'legacy' ? '' : val('f-startDate'),
     approxJoining: val('f-approxJoining'),
     workshopName: val('f-workshopName'),
     workshopDate: val('f-workshopDate'),
@@ -1222,11 +1233,8 @@ function enrollmentRecordHTML(r) {
           ['WhatsApp', r['WhatsApp']],
           ['Email', r['Email']],
           ['Address', r['Address']],
-          ['Program', r['Program']],
           ['Location', r['Location']],
-          ['Batch', r['Batch']],
           ['Joining Date', r['Joining Date']],
-          ['Pracheen', r['Pracheen Kala Kendra']],
           ['Workshop', r['Workshop Name']],
           ['Workshop Date', r['Workshop Date']],
           ['Workshop Fee', r['Workshop Fee']],
