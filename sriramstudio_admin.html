@@ -276,21 +276,32 @@
     html, body { height: auto !important; overflow: visible !important; min-height: 0 !important; background: #fff !important; }
     /* Hide every direct child of body */
     body > * { display: none !important; }
-    /* Show only the receipt print target — ID wins over body > * */
+    /* Bring print-target back from off-screen and show it */
     #print-target {
       display: block !important;
+      position: static !important;
+      left: auto !important;
+      top: auto !important;
       width: 100% !important;
       max-width: 520px !important;
       margin: 0 auto !important;
       padding: 12px !important;
+      pointer-events: auto !important;
     }
-    /* Ensure all receipt internals render */
-    #print-target * { display: revert !important; }
+    /* Explicitly render each receipt element */
+    #print-target .receipt-card,
+    #print-target .receipt-header,
+    #print-target .receipt-rows,
+    #print-target .receipt-stamp  { display: block !important; }
     #print-target .receipt-header-top,
     #print-target .receipt-meta,
     #print-target .receipt-amount-bar,
     #print-target .receipt-row,
-    #print-target .receipt-footer { display: flex !important; }
+    #print-target .receipt-footer  { display: flex !important; }
+    #print-target img               { display: inline-block !important; }
+    #print-target span,
+    #print-target p,
+    #print-target div               { visibility: visible !important; }
     /* Page settings */
     @page { margin: 8mm; size: A4 portrait; }
   }
@@ -1215,16 +1226,19 @@ async function copyReceiptText() {
   const d = currentReceiptData;
   if (!d) return;
   const text =
-    `🪷 *SRIRAM STUDIO — FEE RECEIPT*\n\n` +
-    `Receipt No: ${d.receiptNum}\nDate Issued: ${d.issuedAt}\n\n` +
-    `Student: ${d.studentName}\n` +
-    `Fee Type: ${d.feeType || 'Monthly Fee'}\n` +
-    `Date Received: ${d.dateReceived || d.issuedAt}\n` +
-    `Fee Period: ${d.month} ${d.year}\n` +
-    `Amount: ₹${parseInt(d.amount).toLocaleString('en-IN')} (${amountInWords(d.amount)})\n` +
-    `Payment: ${d.payMode}${d.upiRef ? ' | Ref: ' + d.upiRef : ''}` +
-    `${d.note ? '\nNote: ' + d.note : ''}\n\n` +
-    `_Issued by Sriram Studio_\n📞 +91 98307 92201`;
+    `*SRIRAM STUDIO — FEE RECEIPT*\n` +
+    `An Academy for Performing Arts\n\n` +
+    `Receipt No    : ${d.receiptNum}\n` +
+    `Date Issued   : ${d.issuedAt}\n\n` +
+    `Student       : ${d.studentName}\n` +
+    `Fee Type      : ${d.feeType || 'Monthly Fee'}\n` +
+    `Date Received : ${d.dateReceived || d.issuedAt}\n` +
+    `Fee Period    : ${d.month} ${d.year}\n` +
+    `Amount        : Rs. ${parseInt(d.amount).toLocaleString('en-IN')} (${amountInWords(d.amount)})\n` +
+    `Payment Mode  : ${d.payMode}${d.upiRef ? ' | Ref: ' + d.upiRef : ''}` +
+    `${d.note ? '\nNote          : ' + d.note : ''}\n\n` +
+    `Issued by Sriram Studio\n` +
+    `+91 98307 92201 | sriramstudio.github.io`;
   try {
     await navigator.clipboard.writeText(text);
     const btn = document.getElementById('btn-copy-receipt');
