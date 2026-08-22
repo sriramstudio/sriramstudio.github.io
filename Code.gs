@@ -1226,3 +1226,111 @@ function dropEmptyOverflowColumns() {
   Logger.log(msg);
   return msg;
 }
+
+
+// ─── Backfill the joining month (editor only) ─────────────────
+// Enrolments added before the starting-month field existed have a blank
+// joining column. Their Enrolled At date is the best available answer, and it
+// is what a new enrolment would record today anyway.
+//
+// Only ever fills blanks. Skips the imported legacy roster: those students
+// joined long before this system, so the import date says nothing useful.
+
+function monthYearOf_(v) {
+  if (v === null || v === undefined || v === '') return '';
+  const d = (Object.prototype.toString.call(v) === '[object Date]') ? v : new Date(v.toString());
+  if (isNaN(d.getTime())) return '';
+  return Utilities.formatDate(d, Session.getScriptTimeZone(), 'MMMM yyyy');
+}
+
+function buildJoiningBackfill_() {
+  const sheet = getSheet('Enrollments');
+  const data  = sheet.getDataRange().getValues();
+  if (data.length <= 1) return { error: 'No data rows.' };
+
+  const norm = function (v) { return (v === null || v === undefined) ? '' : v.toString().trim(); };
+  const head = data[0].map(norm);
+
+  let iJoin = -1;
+  for (let c = 0; c < head.length; c++) {
+    if (head[c].indexOf('Joining Date') === 0) { iJoin = c; break; }
+  }
+  if (iJoin < 0) return { error: 'No joining column found. Headers: ' + head.join(' | ') };
+
+  const iId   = head.indexOf('ID');
+  const iWhen = head.indexOf('Enrolled At');
+  const iType = head.indexOf('Type');
+  const iName = head.indexOf('Student Name');
+
+  const fills = [], skippedLegacy = [], alreadySet = [], unreadable = [];
+  for (let r = 1; r < data.length; r++) {
+    const row  = data[r];
+    const id   = norm(row[iId]);
+    const name = norm(row[iName]);
+
+    if (id.indexOf('SR-LEGACY-') === 0) { skippedLegacy.push(name); continue; }
+    if (norm(row[iJoin])) { alreadySet.push(name); continue; }
+
+    const my = monthYearOf_(row[iWhen]);
+    if (!my) { unreadable.push({ row: r + 1, name: name, raw: norm(row[iWhen]) }); continue; }
+    fills.push({ sheetRow: r + 1, name: name, type: norm(row[iType]), value: my });
+  }
+
+  return {
+    iJoin: iJoin, joinHeader: head[iJoin],
+    fills: fills, skippedLegacy: skippedLegacy,
+    alreadySet: alreadySet, unreadable: unreadable, total: data.length - 1
+  };
+}
+
+function previewJoiningBackfill() {
+  const r = buildJoiningBackfill_();
+  if (r.error) { Logger.log(r.error); return r.error; }
+
+  let out = 'JOINING MONTH BACKFILL - PREVIEW\n================================\n';
+  out += 'Target column     : ' + colLetter_(r.iJoin + 1) + ' "' + r.joinHeader + '"\n';
+  out += 'Data rows         : ' + r.total + '\n\n';
+  out += 'Will be filled in : ' + r.fills.length + '\n';
+  out += 'Legacy, skipped   : ' + r.skippedLegacy.length + '\n';
+  out += 'Already has a value, left alone : ' + r.alreadySet.length + '\n';
+  out += 'Enrolled At unreadable          : ' + r.unreadable.length + '\n\n';
+
+  if (r.unreadable.length) {
+    out += 'COULD NOT READ THE ENROLMENT DATE:\n';
+    r.unreadable.forEach(function (x) {
+      out += '  row ' + x.row + '  ' + x.name + '  raw: "' + x.raw + '"\n';
+    });
+    out += '\n';
+  }
+
+  if (r.fills.length) {
+    out += 'TO BE FILLED:\n';
+    r.fills.slice(0, 30).forEach(function (f) {
+      out += '  row ' + f.sheetRow + '  ' + f.name + '  [' + f.type + ']  ->  ' + f.value + '\n';
+    });
+    if (r.fills.length > 30) out += '  ... ' + (r.fills.length - 30) + ' more ...\n';
+  } else {
+    out += 'Nothing to fill.\n';
+  }
+
+  out += '\nNothing was changed. Report only.\n';
+  Logger.log(out);
+  return out;
+}
+
+function backfillJoiningMonth() {
+  const r = buildJoiningBackfill_();
+  if (r.error) { Logger.log(r.error); return r.error; }
+  if (!r.fills.length) { Logger.log('Nothing to fill.'); return 'Nothing to fill.'; }
+
+  const sheet = getSheet('Enrollments');
+  r.fills.forEach(function (f) {
+    sheet.getRange(f.sheetRow, r.iJoin + 1).setValue(f.value);
+  });
+
+  const msg = 'Filled ' + r.fills.length + ' joining month(s). ' +
+              r.skippedLegacy.length + ' legacy row(s) left blank, ' +
+              r.alreadySet.length + ' already had a value.';
+  Logger.log(msg);
+  return msg;
+}

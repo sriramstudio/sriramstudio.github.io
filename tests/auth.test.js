@@ -435,5 +435,35 @@ call(w, { action: 'addEnrollment', pin: '1234',
 jr = w.sheets.Enrollments._data[2];
 check('an Existing Student is left blank rather than guessed', jr[15] === '', jr[15]);
 
+console.log('');
+console.log('--- joining month backfill ---');
+w = freshWorld('1234');
+var bh = ['ID','Enrolled At','Type','Student Name','Date of Birth','Gender',
+  'Blood Group','School/College','Guardian Name','Relation','Phone','WhatsApp',
+  'Email','Address','Location','Joining Date/Approx Joining Month','Workshop Name',
+  'Workshop Date','Workshop Fee','Heard From','Notes','Status','Left On','Review'];
+function bRow(id, when, type, name, join) {
+  var a = []; for (var i = 0; i < 24; i++) a.push('');
+  a[0] = id; a[1] = when; a[2] = type; a[3] = name; a[15] = join || '';
+  return a;
+}
+w.sheets.Enrollments = makeSheet([bh,
+  bRow('SR-2026-1', new Date(2026, 5, 8), 'Application - Admission', 'Blank Kid', ''),
+  bRow('SR-2026-2', new Date(2026, 5, 9), 'New Admission', 'Has One', 'March 2026'),
+  bRow('SR-LEGACY-1', new Date(2026, 7, 22), 'Existing Student', 'Legacy Kid', ''),
+  bRow('SR-2026-3', 'not a date', 'New Admission', 'Bad Date', '')
+]);
+var bf = w.sandbox.buildJoiningBackfill_();
+check('only the blank non-legacy row is filled',
+      bf.fills.length === 1 && bf.fills[0].name === 'Blank Kid',
+      bf.fills.map(function (f) { return f.name; }));
+check('  ...from its enrolment date', bf.fills[0].value === 'January 2026', bf.fills[0].value);
+check('a row that already has a value is left alone',
+      bf.alreadySet.length === 1 && bf.alreadySet[0] === 'Has One', bf.alreadySet);
+check('the legacy roster is skipped',
+      bf.skippedLegacy.length === 1 && bf.skippedLegacy[0] === 'Legacy Kid', bf.skippedLegacy);
+check('an unreadable date is reported, not guessed',
+      bf.unreadable.length === 1 && bf.unreadable[0].name === 'Bad Date', bf.unreadable);
+
 console.log('\n' + (fail === 0 ? 'ALL ' + pass + ' CHECKS PASSED' : pass + ' passed, ' + fail + ' FAILED'));
 process.exit(fail === 0 ? 0 : 1);
