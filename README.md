@@ -18,7 +18,9 @@ Sriram Studio's system has **4 files** working together:
 | `sriramstudio_admin.html` | GitHub Pages (private URL) | You & Anjali | Admin panel — enroll, receipts, records |
 | `Code.gs` | Google Apps Script (inside the Google Sheet) | Runs automatically | The backend / database engine |
 
-**The database** is a Google Sheet with 3 tabs: `Enrollments`, `Receipts`, `Config`.
+**The database** is a Google Sheet with 4 tabs: `Enrollments`, `Receipts`, `Config`,
+and `Legacy Students` (the canonical list of students who joined before the
+registration form existed — see Section 11).
 
 **How data flows:**
 ```
@@ -64,6 +66,12 @@ Keep this section updated. When any of these change, follow the matching checkli
 
 **Apps Script URL (current):**
 `https://script.google.com/macros/s/AKfycbzRB6XQrT8lx2lgcgv9nPQ18akiRCU8x58ritJIgbjNRkKxE3FZAifMREpZ4f7ZgSWD/exec`
+
+**Script ID** (for clasp — see Section 7):
+`13g1OBFlt9ffsyQn_XfAw87W-MFbLE2CiOlllmcTMBzq7Zz5Sx7RfeO0_`
+
+**Deployment ID** (the live one; redeploy to THIS id to keep the URL):
+`AKfycbzRB6XQrT8lx2lgcgv9nPQ18akiRCU8x58ritJIgbjNRkKxE3FZAifMREpZ4f7ZgSWD`
 
 ---
 
@@ -173,7 +181,11 @@ Share this link on Instagram bio, WhatsApp, Google Business. Students/parents fi
 - Shows the applicant a thank-you screen with a Reference ID
 
 ### Admin Panel (`sriramstudio.github.io/sriramstudio_admin.html`)
-First open per browser session asks for **PIN** (default 1234, change in Settings).
+Asks for the **PIN as soon as it loads** — the PIN now guards the whole panel,
+not just the Receipt tab, because Records and Enroll are authenticated too.
+The PIN is verified **on the server**: the web app URL is public (it is embedded
+in `register.html`), so the PIN is the only thing between a visitor and the
+student database. Ten wrong attempts locks the endpoint for 15 minutes.
 
 - **Enroll tab** → 3 modes: New Admission, Workshop, Existing Student (for adding your current roster)
 - **Receipt tab** → PIN-protected. Type a name (autocompletes from records), enter amount, fee type, date received, note → Generate → Copy for WhatsApp or Print/Save PDF
@@ -186,6 +198,27 @@ First open per browser session asks for **PIN** (default 1234, change in Setting
 ---
 
 ## 7. How to Update `Code.gs` (the backend)
+
+### The quick way — clasp (from the project folder)
+
+The project folder is a git repository wired to GitHub, and `clasp` pushes
+`Code.gs` straight to Apps Script. Two commands:
+
+```
+clasp push
+clasp redeploy AKfycbzRB6XQrT8lx2lgcgv9nPQ18akiRCU8x58ritJIgbjNRkKxE3FZAifMREpZ4f7ZgSWD -d "what changed"
+```
+
+Redeploying to that **existing** deployment id creates a new version at the
+**same URL**, so no HTML needs touching. Never use `clasp deploy` — that makes
+a *new* deployment with a *new* URL and breaks `register.html`.
+
+`.claspignore` restricts the push to `Code.gs` and `appsscript.json`, so the
+GitHub Pages HTML is never uploaded into the script project.
+
+To roll back: `clasp redeploy <same-id> -V <older version number>`
+
+### The manual way (if clasp is unavailable)
 
 1. Open your Google Sheet → **Extensions → Apps Script**
 2. Select all existing code (Ctrl+A) → delete → paste the new `Code.gs` → **Save** (Ctrl+S)
@@ -205,7 +238,20 @@ First open per browser session asks for **PIN** (default 1234, change in Setting
 ## 8. Google Sheet Structure (reference)
 
 **Enrollments tab columns:**
-ID · Enrolled At · Type · Student Name · Date of Birth · Gender · Blood Group · School/College · Guardian Name · Relation · Phone · WhatsApp · Email · Address · Program · Location · Batch · Joining Date · Pracheen Kala Kendra · Workshop Name · Workshop Date · Workshop Fee · Heard From · Notes
+ID · Enrolled At · Type · Student Name · Date of Birth · Gender · Blood Group · School/College · Guardian Name · Relation · Phone · WhatsApp · Email · Address · Program · Location · Batch · Joining Date · Pracheen Kala Kendra · Workshop Name · Workshop Date · Workshop Fee · Heard From · Notes · **Status**
+
+`Status` is `Active` or `Left`. Blank counts as active. A student marked `Left`
+still appears in the receipt autocomplete (so old receipts can be reprinted) but
+is flagged there and in Records, so nobody bills them by accident. To mark
+someone as left, type `Left` in their `Status` cell.
+
+**Legacy Students tab columns:**
+Student Name · Contact · Center
+
+The canonical list of pre-form students. `Center` has also been used for status
+words like "discontinue"; the import understands that and files it as `Status`
+rather than as a branch. Add a `Status` column if you ever need to record both a
+centre and a status for the same student.
 
 *(Program, Batch, Pracheen columns are legacy — no longer filled by the forms but kept for old records.)*
 
@@ -232,6 +278,9 @@ Receipt No · Issued At · Student Name · Contact · Amount (₹) · Fee Month 
 | Email not received | Permission not granted, or wrong email in Config | Run any function in Apps Script once to grant permission; check Config `notify_email` |
 | Receipt prints blank / multiple pages | Old file version | Use latest admin file (print CSS fixed) |
 | Setup screen asks every time (admin) | File opened locally, not via GitHub URL | Always open via `sriramstudio.github.io/...` URL |
+| "Unauthorised." from the panel | Browser is running an old cached copy that does not send the PIN | Hard-refresh, or add `?v=2` (bump the number) to the URL |
+| Autocomplete finds nothing on one device | Same cause as above — stale cached page | Hard-refresh that device. On iPhone use the `?v=` trick; there is no Ctrl+Shift+R |
+| Locked out for 15 minutes | Ten failed PIN attempts. The counter is script-wide, so a phone quietly retrying an old cached page can lock everyone out | Wait it out, and hard-refresh any device still on the old copy |
 
 ---
 
@@ -241,6 +290,48 @@ Receipt No · Issued At · Student Name · Contact · Amount (₹) · Fee Month 
 - **Anjali (prasad.anjali.91@gmail.com)** has **Editor** access to the sheet — she can view and edit data directly, but the script runs under Saurav's account.
 - Notification emails are sent from the owner's Gmail.
 - To fully hand over to Anjali later: transfer sheet ownership, then she re-authorises and redeploys the script under her account (generates a new URL that must be updated in the HTML files).
+
+---
+
+---
+
+## 11. Maintenance functions (Apps Script editor only)
+
+These are **not** reachable over the web — they only run from the editor.
+Open the Sheet → Extensions → Apps Script, pick the function from the dropdown,
+click Run, then read the **Execution log**.
+
+| Function | What it does |
+|----------|--------------|
+| `previewLegacyStudents` | Reports what the roster import would do. Changes no rows (it does create the `Status` column header if missing). |
+| `importLegacyStudents` | Adds students from `Legacy Students` to `Enrollments` as `Existing Student`. Safe to re-run. |
+| `addStatusColumn` | Creates the `Status` column on its own. |
+
+The import is an **upsert**: a name already in `Enrollments` is not added again,
+and blank `Phone` / `Location` / `Status` cells are filled from the roster when
+it later gains that detail. Existing values are never overwritten — so you can
+add phone numbers and centres to the roster over time and re-run it.
+
+It **refuses to guess** in two cases, listing them instead: a name repeated in
+the roster with no phone to tell those students apart, and a name already
+enrolled more than once where the roster row has no phone to say which is meant.
+Add a phone number to those rows and run it again.
+
+---
+
+## 12. Testing
+
+`tests/auth.test.js` runs `Code.gs` against stubbed Apps Script globals — no
+network, no sheet. From the project folder:
+
+```
+node tests/auth.test.js Code.gs
+```
+
+It covers the PIN gate, the lockout, the public registration path staying open,
+and the roster import's matching rules. Run it after any change to `Code.gs`.
+
+---
 
 ---
 
