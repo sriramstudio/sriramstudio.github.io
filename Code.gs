@@ -30,7 +30,7 @@ function initHeaders(sheet, name) {
       'Blood Group','School/College','Guardian Name','Relation','Phone','WhatsApp',
       'Email','Address','Program','Location','Batch','Joining Date',
       'Pracheen Kala Kendra','Workshop Name','Workshop Date','Workshop Fee',
-      'Heard From','Notes','Status'];
+      'Heard From','Notes','Status','Left On','Review'];
     sheet.appendRow(h);
     sheet.getRange(1,1,1,h.length).setFontWeight('bold')
       .setBackground('#2C1A0E').setFontColor('#FFFFFF');
@@ -77,18 +77,61 @@ function isLeftWord_(v) {
   return false;
 }
 
-// Returns the zero-based index of the Status column, creating it if needed.
-function ensureStatusColumn_() {
-  const sheet = getSheet('Enrollments');
+// Returns the zero-based index of a column, appending it if the sheet
+// predates it. Columns are only ever added at the end, so existing data
+// never shifts.
+function ensureColumn_(sheetName, header) {
+  const sheet = getSheet(sheetName);
   const width = Math.max(1, sheet.getLastColumn());
   const head  = sheet.getRange(1, 1, 1, width).getValues()[0]
                      .map(function (v) { return (v === null ? '' : v.toString().trim()); });
-  const at = head.indexOf('Status');
+  const at = head.indexOf(header);
   if (at >= 0) return at;
-  const col = width + 1;
-  sheet.getRange(1, col).setValue('Status')
+  sheet.getRange(1, width + 1).setValue(header)
        .setFontWeight('bold').setBackground('#2C1A0E').setFontColor('#FFFFFF');
-  return col - 1;
+  return width;
+}
+
+function ensureStatusColumn_() { return ensureColumn_('Enrollments', 'Status'); }
+
+// A student who has left keeps their row and their receipt history, but is
+// hidden from the receipt autocomplete: a rejoiner gets a fresh row, and the
+// old one must not be pickable.
+function ensureEnrollmentColumns_() {
+  ensureColumn_('Enrollments', 'Status');
+  ensureColumn_('Enrollments', 'Left On');
+  ensureColumn_('Enrollments', 'Review');
+}
+
+// Looks for an existing enrolment under the same name.
+// Prefers a phone match; otherwise falls back to the most recent by name.
+function findExistingStudent_(name, phone) {
+  const n = (name || '').toString().trim().toLowerCase();
+  if (!n) return null;
+  const digits = (phone || '').toString().replace(/\D/g, '');
+  const sheet  = getSheet('Enrollments');
+  const data   = sheet.getDataRange().getValues();
+  if (data.length <= 1) return null;
+  const head   = data[0].map(function (v) { return (v === null ? '' : v.toString().trim()); });
+  const iName  = head.indexOf('Student Name');
+  const iPhone = head.indexOf('Phone');
+  const iId    = head.indexOf('ID');
+  const iStat  = head.indexOf('Status');
+
+  let byName = null;
+  for (let i = data.length - 1; i >= 1; i--) {
+    const rn = (data[i][iName] === undefined || data[i][iName] === null)
+                 ? '' : data[i][iName].toString().trim().toLowerCase();
+    if (rn !== n) continue;
+    const hit = {
+      id:     iId   >= 0 ? (data[i][iId]   || '').toString() : '',
+      status: iStat >= 0 ? (data[i][iStat] || '').toString() : ''
+    };
+    const rd = iPhone >= 0 ? (data[i][iPhone] || '').toString().replace(/\D/g, '') : '';
+    if (digits && rd && rd === digits) return hit;   // strongest match
+    if (!byName) byName = hit;                       // most recent same name
+  }
+  return byName;
 }
 
 // Run once by hand if you want the column created ahead of an import.
@@ -262,43 +305,61 @@ function addEnrollment(d) {
 
   const now = Utilities.formatDate(t, Session.getScriptTimeZone(), 'dd MMM yyyy, hh:mm a');
 
-  sheet.appendRow([
-    id, now,
-    d.mode === 'admission'     ? 'New Admission' :
-    d.mode === 'workshop'      ? 'Workshop' :
-    d.mode === 'legacy'        ? 'Existing Student' :
-    d.mode === 'app-admission' ? 'Application – Admission' :
-    d.mode === 'app-workshop'  ? 'Application – Workshop' : 'Existing Student',
-    d.studentName || '',
-    d.dob || '',
-    d.gender || '',
-    d.bloodGroup || '',
-    d.school || '',
-    d.guardianName || '',
-    d.relation || '',
-    d.phone || '',
-    d.whatsapp || '',
-    d.email || '',
-    d.address || '',
-    d.program || '',
-    d.location || '',
-    d.batch || '',
-    d.mode === 'legacy' ? (d.approxJoining || '') : (d.startDate || d.workshopDate || ''),
-    d.pracheen || '',
-    d.workshopName || '',
-    d.workshopDate || '',
-    d.workshopFee ? '₹' + d.workshopFee : '',
-    d.hearFrom || '',
-    d.notes || '',
-    STATUS_ACTIVE
-  ]);
+  ensureEnrollmentColumns_();
+
+  // A returning student gets a fresh row by design; the old one stays marked
+  // Left. Flag it either way so an accidental duplicate cannot slip past.
+  const prior = findExistingStudent_(d.studentName, d.phone);
+  const review = !prior ? ''
+    : (isLeftWord_(prior.status)
+        ? 'Rejoining? Earlier record ' + prior.id + ' is marked Left'
+        : 'Possible duplicate of active record ' + prior.id);
+
+  const head = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]
+                    .map(function (v) { return (v === null ? '' : v.toString().trim()); });
+  const put  = {
+    'ID': id,
+    'Enrolled At': now,
+    'Type':
+      d.mode === 'admission'     ? 'New Admission' :
+      d.mode === 'workshop'      ? 'Workshop' :
+      d.mode === 'legacy'        ? 'Existing Student' :
+      d.mode === 'app-admission' ? 'Application \u2013 Admission' :
+      d.mode === 'app-workshop'  ? 'Application \u2013 Workshop' : 'Existing Student',
+    'Student Name': d.studentName || '',
+    'Date of Birth': d.dob || '',
+    'Gender': d.gender || '',
+    'Blood Group': d.bloodGroup || '',
+    'School/College': d.school || '',
+    'Guardian Name': d.guardianName || '',
+    'Relation': d.relation || '',
+    'Phone': d.phone || '',
+    'WhatsApp': d.whatsapp || '',
+    'Email': d.email || '',
+    'Address': d.address || '',
+    'Program': d.program || '',
+    'Location': d.location || '',
+    'Batch': d.batch || '',
+    'Joining Date': d.mode === 'legacy' ? (d.approxJoining || '') : (d.startDate || d.workshopDate || ''),
+    'Pracheen Kala Kendra': d.pracheen || '',
+    'Workshop Name': d.workshopName || '',
+    'Workshop Date': d.workshopDate || '',
+    'Workshop Fee': d.workshopFee ? '\u20b9' + d.workshopFee : '',
+    'Heard From': d.hearFrom || '',
+    'Notes': d.notes || '',
+    'Status': STATUS_ACTIVE,
+    'Left On': '',
+    'Review': review
+  };
+  const row = head.map(function (h) { return put.hasOwnProperty(h) ? put[h] : ''; });
+  sheet.appendRow(row);
 
   // Send notifications for self-registered applications only
   if (d.mode === 'app-admission' || d.mode === 'app-workshop') {
     try { sendNotifications(d, id, now); } catch(e) { Logger.log('Notification error: ' + e.message); }
   }
 
-  return { success: true, id, enrolledAt: now };
+  return { success: true, id, enrolledAt: now, review: review };
 }
 
 function getEnrollments() {
@@ -339,6 +400,9 @@ function searchStudents(q) {
     if (nameIdx < 0) break;
     const name = row[nameIdx] !== undefined ? row[nameIdx].toString() : '';
     if (!name) continue;
+    // Someone who has left keeps their record and receipt history, but must
+    // not be pickable for a new receipt — a rejoiner has a fresh row.
+    if (isLeftWord_(col('Status')(row))) continue;
     const phone = col('Phone')(row) || col('WhatsApp')(row);
     // Key on name + phone, not name alone: two different students can share
     // a name, and collapsing them would silently hide one of them.

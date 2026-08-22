@@ -238,12 +238,27 @@ To roll back: `clasp redeploy <same-id> -V <older version number>`
 ## 8. Google Sheet Structure (reference)
 
 **Enrollments tab columns:**
-ID · Enrolled At · Type · Student Name · Date of Birth · Gender · Blood Group · School/College · Guardian Name · Relation · Phone · WhatsApp · Email · Address · Program · Location · Batch · Joining Date · Pracheen Kala Kendra · Workshop Name · Workshop Date · Workshop Fee · Heard From · Notes · **Status**
+ID · Enrolled At · Type · Student Name · Date of Birth · Gender · Blood Group · School/College · Guardian Name · Relation · Phone · WhatsApp · Email · Address · Program · Location · Batch · Joining Date · Pracheen Kala Kendra · Workshop Name · Workshop Date · Workshop Fee · Heard From · Notes · **Status** · **Left On** · **Review**
 
-`Status` is `Active` or `Left`. Blank counts as active. A student marked `Left`
-still appears in the receipt autocomplete (so old receipts can be reprinted) but
-is flagged there and in Records, so nobody bills them by accident. To mark
-someone as left, type `Left` in their `Status` cell.
+`Status` is `Active` or `Left`. Blank counts as active. To mark someone as left,
+type `Left` in their `Status` cell — `left`, `discontinued`, `inactive`,
+`stopped` and `dropped` are accepted too. Record the last fee month and year in
+`Left On`, e.g. `March 2027`.
+
+**A student marked `Left` disappears from the receipt autocomplete.** Their row
+and receipt history stay intact and they are still visible in Records — they
+simply cannot be picked for a new receipt.
+
+**If they rejoin, they get a new row.** Do not reactivate the old one: the old
+record stays `Left` as the history of that spell, and the new row is the live
+one. Because left students are hidden from autocomplete, there is no ambiguity
+about which to pick.
+
+`Review` is set automatically when a new enrolment matches an existing name —
+`Rejoining? Earlier record SR-... is marked Left` when the match has left, or
+`Possible duplicate of active record SR-...` when it has not. Records shows a
+**REVIEW** badge. Check it, then clear the cell. A genuinely new student who
+happens to share a name is never blocked, only flagged.
 
 **Legacy Students tab columns:**
 Student Name · Contact · Center

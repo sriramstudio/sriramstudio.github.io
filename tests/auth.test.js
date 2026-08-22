@@ -263,5 +263,36 @@ check('  ...and falls back to the one name', last[sAt] === 'Solo Student', last[
 check('  ...without adding the column twice',
       recSheet._data[0].length === widthBefore, recSheet._data[0].length);
 
+console.log('');
+console.log('--- left students and rejoining students ---');
+w = freshWorld('1234');
+var eh0 = w.sheets.Enrollments._data[0];
+w.sheets.Enrollments._data[1][eh0.indexOf('Status')] = 'Left';
+r = call(w, { action: 'searchStudents', q: 'Test Child', pin: '1234' });
+check('a student who has left is not offered for a receipt',
+      !r.results || r.results.length === 0, r.results);
+
+r = call(w, { action: 'addEnrollment', pin: '1234',
+              data: enc({ mode: 'admission', studentName: 'Test Child', phone: '9999' }) });
+check('the rejoiner gets a fresh row', r.success === true, r);
+check('  ...flagged against the earlier Left record',
+      (r.review || '').indexOf('Rejoining') === 0, r.review);
+r = call(w, { action: 'searchStudents', q: 'Test Child', pin: '1234' });
+check('  ...and only the new active row is offered',
+      r.results && r.results.length === 1, r.results);
+
+r = call(w, { action: 'addEnrollment', pin: '1234',
+              data: enc({ mode: 'admission', studentName: 'Test Child', phone: '9999' }) });
+check('a duplicate of an ACTIVE record reads differently',
+      (r.review || '').indexOf('Possible duplicate') === 0, r.review);
+
+r = call(w, { action: 'addEnrollment', pin: '1234',
+              data: enc({ mode: 'admission', studentName: 'Nobody Else', phone: '5555' }) });
+check('a genuinely new student is not flagged', !r.review, r.review);
+
+var eh1 = w.sheets.Enrollments._data[0];
+check('Left On column is created', eh1.indexOf('Left On') >= 0, eh1);
+check('Review column is created', eh1.indexOf('Review') >= 0, eh1);
+
 console.log('\n' + (fail === 0 ? 'ALL ' + pass + ' CHECKS PASSED' : pass + ' passed, ' + fail + ' FAILED'));
 process.exit(fail === 0 ? 0 : 1);

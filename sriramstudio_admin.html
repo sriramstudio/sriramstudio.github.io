@@ -1418,7 +1418,7 @@ function enrollmentRecordHTML(r) {
     <div class="record-card" onclick="toggleRecord(this)">
       <div class="record-card-top">
         <div>
-          <div class="name">${r['Student Name'] || '—'} <span class="badge ${typeClass}">${r['Type']||''}</span>${hasLeft(r['Status']) ? ' <span class="badge" style="background:var(--danger);color:#fff">LEFT</span>' : ''}</div>
+          <div class="name">${r['Student Name'] || '—'} <span class="badge ${typeClass}">${r['Type']||''}</span>${hasLeft(r['Status']) ? ' <span class="badge" style="background:var(--danger);color:#fff">LEFT</span>' : ''}${(r['Review']||'').trim() ? ' <span class="badge" style="background:var(--saffron);color:#2C1A0E" title="' + String(r['Review']).replace(/"/g, '') + '">REVIEW</span>' : ''}</div>
           <div class="sub">${prog} · ${loc} · ${r['Phone']||'—'}</div>
         </div>
         <div class="meta">
@@ -1432,6 +1432,8 @@ function enrollmentRecordHTML(r) {
           ['Enrollment ID', r['ID']],
           ['Type', r['Type']],
           ['Status', hasLeft(r['Status']) ? 'Left' : (r['Status'] || 'Active')],
+          ['Left On', r['Left On']],
+          ['Review', r['Review']],
           ['Date of Birth', r['Date of Birth']],
           ['Gender', r['Gender']],
           ['Blood Group', r['Blood Group']],
