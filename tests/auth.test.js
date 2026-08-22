@@ -137,5 +137,25 @@ check('a correct PIN before the limit succeeds', r.valid === true, r);
 r = call(w, { action: 'verifyPin', pin: '0000' });
 check('  ...and success reset the counter', r.locked === undefined, r);
 
+console.log('\n--- same-name students stay distinct ---');
+w = freshWorld('1234');
+// A second, different student who happens to share a name.
+r = call(w, { action: 'addEnrollment', pin: '1234',
+              data: enc({ mode: 'legacy', studentName: 'Test Child', phone: '8888888888' }) });
+check('second same-name student added', r.success === true, r);
+r = call(w, { action: 'searchStudents', q: 'Test Child', pin: '1234' });
+check('BOTH same-name students are returned', r.results && r.results.length === 2, r.results);
+check('  ...and their phones differ',
+      r.results && r.results.length === 2 && r.results[0].phone !== r.results[1].phone,
+      r.results && r.results.map(function (x) { return x.phone; }));
+
+console.log('\n--- editor-only importer is not reachable over the web ---');
+w = freshWorld('1234');
+r = call(w, { action: 'importLegacyStudents' });
+check('importLegacyStudents with NO pin is refused', r.auth === true, r);
+r = call(w, { action: 'importLegacyStudents', pin: '1234' });
+check('  ...and is not a routed action even WITH the pin',
+      typeof r.error === 'string' && r.error.indexOf('Unknown action') === 0, r);
+
 console.log('\n' + (fail === 0 ? 'ALL ' + pass + ' CHECKS PASSED' : pass + ' passed, ' + fail + ' FAILED'));
 process.exit(fail === 0 ? 0 : 1);

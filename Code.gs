@@ -298,11 +298,15 @@ function searchStudents(q) {
     if (nameIdx < 0) break;
     const name = row[nameIdx] !== undefined ? row[nameIdx].toString() : '';
     if (!name) continue;
-    if (name.toLowerCase().includes(lower) && !seen.has(name)) {
-      seen.add(name);
+    const phone = col('Phone')(row) || col('WhatsApp')(row);
+    // Key on name + phone, not name alone: two different students can share
+    // a name, and collapsing them would silently hide one of them.
+    const key = name.toLowerCase() + '|' + phone.replace(/\D/g, '');
+    if (name.toLowerCase().includes(lower) && !seen.has(key)) {
+      seen.add(key);
       results.push({
         studentName: name,
-        phone:    col('Phone')(row) || col('WhatsApp')(row),
+        phone:    phone,
         program:  col('Program')(row),
         location: col('Location')(row)
       });
@@ -469,4 +473,124 @@ function setPin(current, newPin) {
     }
   }
   return { success: false, error: 'Config sheet error.' };
+}
+
+
+// ─── Legacy student import (run by hand from the editor) ──────
+// Students who joined before the registration form existed appear only in
+// the Receipts sheet, so searchStudents — which reads Enrollments — never
+// finds them. These rebuild Enrollment rows from the receipt history,
+// carrying the contact number across so same-name students stay distinct.
+//
+// NOT routed through doGet: these are editor-only, never reachable on the web.
+// Run previewLegacyImport() first — it writes nothing.
+
+function colIndex_(headers, name) {
+  const i = headers.indexOf(name);
+  if (i < 0) throw new Error('Missing column in sheet: ' + name);
+  return i;
+}
+
+function buildLegacyImport_() {
+  const rData = getSheet('Receipts').getDataRange().getValues();
+  const eData = getSheet('Enrollments').getDataRange().getValues();
+  if (rData.length <= 1) return { toAdd: [], text: 'Receipts sheet is empty.' };
+
+  const rHead = rData[0], eHead = eData[0];
+  const rName = colIndex_(rHead, 'Student Name');
+  const rCont = colIndex_(rHead, 'Contact');
+  const eName = colIndex_(eHead, 'Student Name');
+  const ePhone = colIndex_(eHead, 'Phone');
+
+  const norm   = v => (v === undefined || v === null) ? '' : v.toString().trim();
+  const digits = v => norm(v).replace(/\D/g, '');
+
+  // Who is already enrolled, keyed by name + phone digits.
+  const existing = new Set();
+  for (let i = 1; i < eData.length; i++) {
+    const n = norm(eData[i][eName]);
+    if (n) existing.add(n.toLowerCase() + '|' + digits(eData[i][ePhone]));
+  }
+
+  // Distinct name+contact pairs across the whole receipt history.
+  const seen = {};
+  for (let i = 1; i < rData.length; i++) {
+    const n = norm(rData[i][rName]);
+    if (!n) continue;
+    const key = n.toLowerCase() + '|' + digits(rData[i][rCont]);
+    if (!seen[key]) seen[key] = { name: n, phone: norm(rData[i][rCont]), digits: digits(rData[i][rCont]), count: 0 };
+    seen[key].count++;
+  }
+
+  const toAdd = [], skipped = [], noPhone = [], byName = {};
+  Object.keys(seen).forEach(k => {
+    const rec = seen[k], ln = rec.name.toLowerCase();
+    (byName[ln] = byName[ln] || []).push(rec);
+    if (existing.has(k)) { skipped.push(rec); return; }
+    if (!rec.digits) noPhone.push(rec);
+    toAdd.push(rec);
+  });
+  const collisions = Object.keys(byName).filter(n => byName[n].length > 1).map(n => byName[n]);
+
+  let text = 'LEGACY IMPORT PREVIEW\n---------------------\n';
+  text += 'Distinct name+contact pairs in Receipts : ' + Object.keys(seen).length + '\n';
+  text += 'Already in Enrollments (will skip)      : ' + skipped.length + '\n';
+  text += 'Will be added as "Existing Student"     : ' + toAdd.length + '\n';
+  text += 'Of those, with NO phone number          : ' + noPhone.length + '\n\n';
+
+  if (collisions.length) {
+    text += 'SAME NAME, DIFFERENT CONTACT — check these are really different people:\n';
+    collisions.forEach(g => {
+      text += '  ' + g[0].name + '\n';
+      g.forEach(r => { text += '     ' + (r.phone || '(no phone)') + '  - ' + r.count + ' receipt(s)\n'; });
+    });
+    text += '\n';
+  } else {
+    text += 'No same-name collisions found.\n\n';
+  }
+
+  if (noPhone.length) {
+    text += 'NO PHONE ON RECEIPT (cannot be told apart if the name repeats):\n';
+    noPhone.forEach(r => { text += '  ' + r.name + '\n'; });
+    text += '\n';
+  }
+
+  text += 'To be added:\n';
+  toAdd.forEach(r => { text += '  ' + r.name + '   ' + (r.phone || '(no phone)') + '\n'; });
+
+  return { toAdd: toAdd, skipped: skipped, collisions: collisions, noPhone: noPhone, text: text, eHead: eHead };
+}
+
+// Read-only. Writes nothing — run this first and read the log.
+function previewLegacyImport() {
+  const r = buildLegacyImport_();
+  Logger.log(r.text);
+  return r.text;
+}
+
+// Appends the rows. Safe to re-run: anything already present is skipped.
+function importLegacyStudents() {
+  const r = buildLegacyImport_();
+  if (!r.toAdd || !r.toAdd.length) { Logger.log('Nothing to add.'); return 'Nothing to add.'; }
+
+  const sheet = getSheet('Enrollments');
+  const head  = r.eHead;
+  const now   = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd MMM yyyy, hh:mm a');
+  const stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMddHHmmss');
+
+  const rows = r.toAdd.map((rec, i) => {
+    const row = new Array(head.length).fill('');
+    row[colIndex_(head, 'ID')]           = 'SR-LEGACY-' + stamp + '-' + String(i + 1).padStart(3, '0');
+    row[colIndex_(head, 'Enrolled At')]  = now;
+    row[colIndex_(head, 'Type')]         = 'Existing Student';
+    row[colIndex_(head, 'Student Name')] = rec.name;
+    row[colIndex_(head, 'Phone')]        = rec.phone;
+    row[colIndex_(head, 'WhatsApp')]     = rec.phone;
+    row[colIndex_(head, 'Notes')]        = 'Imported from receipt history';
+    return row;
+  });
+
+  sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, head.length).setValues(rows);
+  Logger.log('Added ' + rows.length + ' legacy students.');
+  return 'Added ' + rows.length + ' legacy students.';
 }
