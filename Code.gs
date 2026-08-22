@@ -134,10 +134,16 @@ function findExistingStudent_(name, phone) {
   return byName;
 }
 
-// Run once by hand if you want the column created ahead of an import.
+// Run by hand to create the tracking columns now rather than waiting for the
+// next enrolment to add them.
 function addStatusColumn() {
-  const at = ensureStatusColumn_();
-  const msg = 'Status column is at position ' + (at + 1) + '.';
+  ensureEnrollmentColumns_();
+  const sheet = getSheet('Enrollments');
+  const head  = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]
+                     .map(function (v) { return (v === null ? '' : v.toString().trim()); });
+  const msg = ['Status', 'Left On', 'Review'].map(function (h) {
+    return h + ' = column ' + (head.indexOf(h) + 1);
+  }).join(', ');
   Logger.log(msg);
   return msg;
 }
