@@ -481,9 +481,13 @@ function setPin(current, newPin) {
 // before the registration form existed. Receipts are NOT used as a source:
 // they contain misspellings and siblings recorded together in one row.
 //
-// Imported rows are marked Type = "Existing Student" (the same label the
-// admin panel's "Existing Student" mode uses) so they never read as new
-// admissions, with the source recorded in Notes.
+// Imported rows carry Type = "Existing Student" (the label the admin panel's
+// Existing Student mode uses) so they never read as new admissions.
+//
+// Runs as an UPSERT, because the roster is expected to be filled in over
+// time: a name already present is not added again, and blank Phone/Location
+// cells are filled from the roster when it later gains that detail. Existing
+// values are never overwritten.
 //
 // Editor-only — deliberately not routed through doGet.
 // previewLegacyStudents() writes NOTHING. Run it first.
@@ -498,7 +502,7 @@ function findColumn_(headers, candidates) {
 }
 
 function buildLegacyRoster_() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ss  = SpreadsheetApp.getActiveSpreadsheet();
   const tab = ss.getSheetByName('Legacy Students');
   if (!tab) {
     const names = ss.getSheets().map(function (x) { return x.getName(); }).join(', ');
@@ -511,59 +515,103 @@ function buildLegacyRoster_() {
   const norm   = function (v) { return (v === null || v === undefined) ? '' : v.toString().trim(); };
   const digits = function (v) { return norm(v).replace(/\D/g, ''); };
 
-  const lHead  = lData[0].map(norm);
-  const nameAt = findColumn_(lHead, ['student name', 'name']);
+  const lHead    = lData[0].map(norm);
+  const nameAt   = findColumn_(lHead, ['student name', 'name']);
   const phoneAt  = findColumn_(lHead, ['phone', 'contact', 'mobile', 'whatsapp']);
   const centreAt = findColumn_(lHead, ['center', 'centre', 'location', 'branch']);
   if (nameAt < 0) return { error: 'No name column found. Headers: ' + lHead.join(' | ') };
 
-  // Existing enrollments, keyed by name + phone digits.
   const eData  = getSheet('Enrollments').getDataRange().getValues();
   const eHead  = eData[0].map(norm);
   const eName  = eHead.indexOf('Student Name');
   const ePhone = eHead.indexOf('Phone');
-  const existing = new Set(), existingNames = {};
+  const eWa    = eHead.indexOf('WhatsApp');
+  const eLoc   = eHead.indexOf('Location');
+
+  // Everyone already in Enrollments, indexed by name.
+  const byExisting = {};
   for (let i = 1; i < eData.length; i++) {
     const n = norm(eData[i][eName]);
     if (!n) continue;
-    existing.add(n.toLowerCase() + '|' + digits(eData[i][ePhone]));
-    existingNames[n.toLowerCase()] = (existingNames[n.toLowerCase()] || 0) + 1;
+    const k = n.toLowerCase();
+    (byExisting[k] = byExisting[k] || []).push({
+      sheetRow: i + 1,
+      phone:    norm(eData[i][ePhone]),
+      digits:   digits(eData[i][ePhone]),
+      location: norm(eData[i][eLoc])
+    });
   }
 
-  // Read the roster.
+  // The roster.
   const rows = [], byName = {};
   for (let i = 1; i < lData.length; i++) {
     const n = norm(lData[i][nameAt]);
     if (!n) continue;
-    const p = phoneAt >= 0 ? norm(lData[i][phoneAt]) : '';
-    const c = centreAt >= 0 ? norm(lData[i][centreAt]) : '';
-    const rec = { row: i + 1, name: n, phone: p, digits: digits(p), centre: c };
+    const rec = {
+      row:    i + 1,
+      name:   n,
+      phone:  phoneAt  >= 0 ? norm(lData[i][phoneAt])  : '',
+      centre: centreAt >= 0 ? norm(lData[i][centreAt]) : ''
+    };
+    rec.digits = digits(rec.phone);
     rows.push(rec);
     const k = n.toLowerCase();
     (byName[k] = byName[k] || []).push(rec);
   }
 
-  const toAdd = [], already = [], blocked = [];
+  const toAdd = [], toUpdate = [], already = [], blocked = [], ambiguous = [];
+
   rows.forEach(function (rec) {
-    const k = rec.name.toLowerCase();
-    const sameName = byName[k];
-    // A repeated name with no phone cannot be told apart from its twin,
-    // and importing both would put two identical rows in the database.
-    if (sameName.length > 1 && !rec.digits) { blocked.push(rec); return; }
-    if (existing.has(k + '|' + rec.digits)) { already.push(rec); return; }
-    toAdd.push(rec);
+    const k       = rec.name.toLowerCase();
+    const twins   = byName[k];              // same name within the roster
+    const matches = byExisting[k] || [];    // same name already enrolled
+
+    if (!matches.length) {
+      // Two roster rows with one name and no phone would land as identical
+      // rows — refuse rather than create something nobody can tell apart.
+      if (twins.length > 1 && !rec.digits) { blocked.push(rec); return; }
+      toAdd.push(rec);
+      return;
+    }
+
+    // Pick which existing row this refers to.
+    let target = null;
+    if (rec.digits) {
+      const exact = matches.filter(function (m) { return m.digits === rec.digits; });
+      if (exact.length) target = exact[0];
+      else {
+        const blank = matches.filter(function (m) { return !m.digits; });
+        // A blank-phone row is the one we imported earlier; fill it in.
+        // Otherwise this is a genuinely different student sharing a name.
+        if (blank.length) target = blank[0];
+        else { toAdd.push(rec); return; }
+      }
+    } else {
+      if (matches.length > 1) { ambiguous.push(rec); return; }
+      target = matches[0];
+    }
+
+    // Fill blanks only — never overwrite what is already recorded.
+    const sets = [];
+    if (rec.phone  && !target.phone)    sets.push({ col: ePhone + 1, val: rec.phone, what: 'phone' });
+    if (rec.phone  && !target.phone && eWa >= 0) sets.push({ col: eWa + 1, val: rec.phone, what: 'whatsapp' });
+    if (rec.centre && !target.location) sets.push({ col: eLoc + 1, val: rec.centre, what: 'centre' });
+
+    if (sets.length) toUpdate.push({ rec: rec, sheetRow: target.sheetRow, sets: sets });
+    else already.push(rec);
   });
 
   const dupes = Object.keys(byName).filter(function (k) { return byName[k].length > 1; });
 
   return {
-    nameHeader: lHead[nameAt],
-    phoneHeader: phoneAt >= 0 ? lHead[phoneAt] : null,
     headers: lHead,
+    nameHeader:   lHead[nameAt],
+    phoneHeader:  phoneAt  >= 0 ? lHead[phoneAt]  : null,
     centreHeader: centreAt >= 0 ? lHead[centreAt] : null,
     total: rows.length,
-    toAdd: toAdd, already: already, blocked: blocked,
-    dupes: dupes, byName: byName, eHead: eData[0].map(norm)
+    toAdd: toAdd, toUpdate: toUpdate, already: already,
+    blocked: blocked, ambiguous: ambiguous,
+    dupes: dupes, byName: byName, eHead: eHead
   };
 }
 
@@ -574,36 +622,44 @@ function previewLegacyStudents() {
   let out = 'LEGACY ROSTER IMPORT - PREVIEW\n==============================\n\n';
   out += 'Tab headers   : ' + r.headers.join(' | ') + '\n';
   out += 'Name column   : "' + r.nameHeader + '"\n';
-  out += 'Phone column  : ' + (r.phoneHeader ? '"' + r.phoneHeader + '"' : 'NONE FOUND') + '\n';
+  out += 'Phone column  : ' + (r.phoneHeader  ? '"' + r.phoneHeader  + '"' : 'NONE FOUND') + '\n';
   out += 'Centre column : ' + (r.centreHeader ? '"' + r.centreHeader + '"' : 'NONE FOUND') + '\n';
   out += 'Names listed  : ' + r.total + '\n\n';
 
-  out += 'Will be added as "Existing Student" : ' + r.toAdd.length + '\n';
-  out += 'Already in Enrollments (skipped)    : ' + r.already.length + '\n';
-  out += 'Blocked, needs a phone number       : ' + r.blocked.length + '\n\n';
-
-  if (r.dupes.length) {
-    out += 'REPEATED NAMES IN YOUR LIST (' + r.dupes.length + '):\n';
-    r.dupes.forEach(function (k) {
-      r.byName[k].forEach(function (x) {
-        out += '  row ' + x.row + '  ' + x.name + '   ' + (x.phone || '<-- ADD A PHONE NUMBER') + '\n';
-      });
-    });
-    out += '\n';
-  }
+  out += 'New rows to add                  : ' + r.toAdd.length + '\n';
+  out += 'Existing rows to fill in         : ' + r.toUpdate.length + '\n';
+  out += 'Already complete (nothing to do) : ' + r.already.length + '\n';
+  out += 'Blocked - repeated name, no phone: ' + r.blocked.length + '\n';
+  out += 'Ambiguous - name enrolled twice  : ' + r.ambiguous.length + '\n\n';
 
   if (r.blocked.length) {
-    out += 'NOT IMPORTED - same name as another student and no phone to tell\n';
-    out += 'them apart. Add phone numbers on these rows, then run again:\n';
+    out += 'NOT IMPORTED - same name as another roster row and no phone to\n';
+    out += 'tell them apart. Add a phone on these rows, then run again:\n';
     r.blocked.forEach(function (x) { out += '  row ' + x.row + '  ' + x.name + '\n'; });
     out += '\n';
   }
+  if (r.ambiguous.length) {
+    out += 'SKIPPED - this name is already in Enrollments more than once, and\n';
+    out += 'the roster row has no phone to say which one it means:\n';
+    r.ambiguous.forEach(function (x) { out += '  row ' + x.row + '  ' + x.name + '\n'; });
+    out += '\n';
+  }
+  if (r.toUpdate.length) {
+    out += 'WILL FILL IN (blank cells only, nothing overwritten):\n';
+    r.toUpdate.slice(0, 15).forEach(function (u) {
+      out += '  ' + u.rec.name + '  ->  ' +
+             u.sets.map(function (x) { return x.what + '=' + x.val; }).join(', ') + '\n';
+    });
+    if (r.toUpdate.length > 15) out += '  ... ' + (r.toUpdate.length - 15) + ' more ...\n';
+    out += '\n';
+  }
 
-  // Apps Script truncates long logs, so show a sample rather than all of them.
   if (r.toAdd.length) {
     const withPhone  = r.toAdd.filter(function (x) { return !!x.digits; }).length;
     const withCentre = r.toAdd.filter(function (x) { return !!x.centre; }).length;
-    out += 'Of those to add: ' + withPhone + ' have a phone, ' + withCentre + ' have a centre.\n\n';
+    out += 'Of the new rows: ' + withPhone + ' have a phone, ' + withCentre + ' have a centre.\n';
+    out += 'The rest go in with the name only — phone and centre can be added\n';
+    out += 'to the roster later and filled in by re-running this import.\n\n';
     out += 'SAMPLE (first 10 and last 5 of ' + r.toAdd.length + '):\n';
     const show = function (x) {
       out += '  ' + x.name + '   ' + (x.phone || '(no phone)') +
@@ -619,34 +675,50 @@ function previewLegacyStudents() {
   return out;
 }
 
-// Appends the roster to Enrollments. Safe to re-run: existing rows are skipped.
+// Appends new students and fills blanks on ones already there.
+// Safe to re-run as the roster gains phone numbers and centres.
 function importLegacyStudents() {
   const r = buildLegacyRoster_();
   if (r.error) { Logger.log(r.error); return r.error; }
-  if (!r.toAdd.length) { Logger.log('Nothing to add.'); return 'Nothing to add.'; }
+  if (!r.toAdd.length && !r.toUpdate.length) { Logger.log('Nothing to do.'); return 'Nothing to do.'; }
 
   const sheet = getSheet('Enrollments');
   const head  = r.eHead;
-  const idx   = function (n) { const i = head.indexOf(n); if (i < 0) throw new Error('Missing column: ' + n); return i; };
-  const now   = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd MMM yyyy, hh:mm a');
-  const stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMddHHmmss');
+  const idx   = function (n) {
+    const i = head.indexOf(n);
+    if (i < 0) throw new Error('Missing column: ' + n);
+    return i;
+  };
 
-  const rows = r.toAdd.map(function (rec, i) {
-    const row = new Array(head.length).fill('');
-    row[idx('ID')]           = 'SR-LEGACY-' + stamp + '-' + String(i + 1).padStart(3, '0');
-    row[idx('Enrolled At')]  = now;
-    row[idx('Type')]         = 'Existing Student';
-    row[idx('Student Name')] = rec.name;
-    row[idx('Phone')]        = rec.phone;
-    row[idx('WhatsApp')]     = rec.phone;
-    row[idx('Location')]     = rec.centre;
-    row[idx('Notes')]        = 'Legacy roster - imported from Legacy Students tab';
-    return row;
+  // Fill blanks on rows that already exist.
+  r.toUpdate.forEach(function (u) {
+    u.sets.forEach(function (st) { sheet.getRange(u.sheetRow, st.col).setValue(st.val); });
   });
 
-  sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, head.length).setValues(rows);
-  const msg = 'Added ' + rows.length + ' legacy students.' +
-              (r.blocked.length ? ' ' + r.blocked.length + ' still blocked - see previewLegacyStudents().' : '');
+  // Append the new ones.
+  let added = 0;
+  if (r.toAdd.length) {
+    const now   = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd MMM yyyy, hh:mm a');
+    const stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMddHHmmss');
+    const rows  = r.toAdd.map(function (rec, i) {
+      const row = new Array(head.length).fill('');
+      row[idx('ID')]           = 'SR-LEGACY-' + stamp + '-' + String(i + 1).padStart(3, '0');
+      row[idx('Enrolled At')]  = now;
+      row[idx('Type')]         = 'Existing Student';
+      row[idx('Student Name')] = rec.name;
+      row[idx('Phone')]        = rec.phone;
+      row[idx('WhatsApp')]     = rec.phone;
+      row[idx('Location')]     = rec.centre;
+      row[idx('Notes')]        = 'Legacy roster - imported from Legacy Students tab';
+      return row;
+    });
+    sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, head.length).setValues(rows);
+    added = rows.length;
+  }
+
+  let msg = 'Added ' + added + ' student(s); filled in ' + r.toUpdate.length + ' existing row(s).';
+  if (r.blocked.length)   msg += ' ' + r.blocked.length + ' blocked.';
+  if (r.ambiguous.length) msg += ' ' + r.ambiguous.length + ' ambiguous.';
   Logger.log(msg);
   return msg;
 }
