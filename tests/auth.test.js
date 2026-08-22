@@ -567,5 +567,36 @@ check('a shared-surname clubbed receipt covers BOTH siblings',
       rv.indexOf('Riya Sen') < 0 && rv.indexOf('Diya Sen') < 0,
       'a Sen sibling was wrongly listed as unbilled');
 
+console.log('');
+console.log('--- duplicate receipts ---');
+w = freshWorld('1234');
+var rhd = ['Receipt No','Issued At','Student Name','Contact','Amount (₹)',
+  'Fee Month','Fee Year','Payment Mode','UPI Reference','Fee Type','Date Received',
+  'Note','Students'];
+function rRow(no, name, amt, mon, type, students) {
+  return [no,'01 Aug 2026',name,'9',amt,mon,'2026','Cash','',type,'','',students||''];
+}
+w.sheets.Receipts = makeSheet([rhd,
+  rRow('SS-1','Aarna Vadera','2000','August','Monthly Fee'),
+  rRow('SS-2','Aarna Vadera','2000','August','Monthly Fee'),
+  rRow('SS-3','Bela Roy','2000','August','Monthly Fee'),
+  rRow('SS-4','Bela Roy','2500','August','Monthly Fee'),
+  rRow('SS-5','Cara Das','2000','August','Monthly Fee'),
+  rRow('SS-6','Cara Das','500','August','Registration Fee'),
+  rRow('SS-7','Riya Sen & Diya Sen','3000','August','Monthly Fee','Riya Sen | Diya Sen'),
+  rRow('SS-8','Diya Sen & Riya Sen','3000','August','Monthly Fee','Diya Sen | Riya Sen')
+]);
+var dr = w.sandbox.findDuplicateReceipts();
+check('an identical repeat is flagged',
+      dr.indexOf('identical amount                   : 2') >= 0, 'see log');
+check('  ...including a clubbed pair listed in either order',
+      dr.indexOf('diya sen + riya sen') >= 0, 'clubbed pair not grouped');
+check('a differing amount is called a possible reissue',
+      dr.indexOf('differing amounts (a reissue?)     : 1') >= 0, 'see log');
+check('a registration fee alongside monthly is not called a duplicate',
+      dr.indexOf('Same period, different fee type      : 1') >= 0, 'see log');
+check('the revenue at stake is totalled',
+      dr.indexOf('Rs. 7,000') >= 0, dr.split(String.fromCharCode(10))[5]);
+
 console.log('\n' + (fail === 0 ? 'ALL ' + pass + ' CHECKS PASSED' : pass + ' passed, ' + fail + ' FAILED'));
 process.exit(fail === 0 ? 0 : 1);
