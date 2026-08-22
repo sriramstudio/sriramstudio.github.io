@@ -436,5 +436,36 @@ check('the legacy roster is skipped',
 check('an unreadable date is reported, not guessed',
       bf.unreadable.length === 1 && bf.unreadable[0].name === 'Bad Date', bf.unreadable);
 
+console.log('');
+console.log('--- listStudents (autocomplete source) ---');
+w = freshWorld('1234');
+r = call(w, { action: 'listStudents' });
+check('listStudents needs the PIN', r.auth === true, r);
+
+call(w, { action: 'addEnrollment', pin: '1234',
+          data: enc({ mode: 'legacy', studentName: 'Krisha Agarwal', phone: '9111111111' }) });
+call(w, { action: 'addEnrollment', pin: '1234',
+          data: enc({ mode: 'legacy', studentName: 'Krisha Agarwal', phone: '9222222222' }) });
+call(w, { action: 'addEnrollment', pin: '1234',
+          data: enc({ mode: 'legacy', studentName: 'Gone Away', phone: '9333333333' }) });
+var ed = w.sheets.Enrollments._data;
+ed[ed.length - 1][ed[0].indexOf('Status')] = 'Left';
+
+r = call(w, { action: 'listStudents', pin: '1234' });
+var names = (r.students || []).map(function (x) { return x.studentName; });
+check('returns the active roster', names.indexOf('Test Child') >= 0, names);
+check('a student who has left is excluded', names.indexOf('Gone Away') < 0, names);
+var krishas = (r.students || []).filter(function (x) { return x.studentName === 'Krisha Agarwal'; });
+check('both same-name students are returned', krishas.length === 2, krishas.length);
+check('  ...with different phones',
+      krishas.length === 2 && krishas[0].phone !== krishas[1].phone,
+      krishas.map(function (x) { return x.phone; }));
+
+call(w, { action: 'addEnrollment', pin: '1234',
+          data: enc({ mode: 'legacy', studentName: 'Test Child', phone: '9999' }) });
+r = call(w, { action: 'listStudents', pin: '1234' });
+var dupes = (r.students || []).filter(function (x) { return x.studentName === 'Test Child'; });
+check('an identical name and phone is listed once', dupes.length === 1, dupes.length);
+
 console.log('\n' + (fail === 0 ? 'ALL ' + pass + ' CHECKS PASSED' : pass + ' passed, ' + fail + ' FAILED'));
 process.exit(fail === 0 ? 0 : 1);

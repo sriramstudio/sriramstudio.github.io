@@ -1021,6 +1021,7 @@ async function submitEnrollment() {
     if (r.error) throw new Error(r.error);
     document.getElementById('enroll-success-msg').textContent =
       `${data.studentName} · ID: ${r.id} · Recorded ${r.enrolledAt}`;
+    invalidateStudentCache();
     document.getElementById('enroll-form-view').style.display   = 'none';
     document.getElementById('enroll-success-view').style.display = 'block';
     toast('Enrollment saved to Google Sheets ✓', 'success');
@@ -1091,93 +1092,101 @@ function setPayMode(mode) {
   document.getElementById('upi-ref-field').style.display = mode === 'UPI' ? '' : 'none';
 }
 
-function searchStudents(q) {
-  clearTimeout(searchTimeout);
-  if (!q || q.length < 2) { closeSuggestions(); return; }
-  searchTimeout = setTimeout(async () => {
-    try {
-      const r = await api('searchStudents', { q });
-      const list = document.getElementById('student-suggestions');
-      if (!r.results || r.results.length === 0) {
-        list.innerHTML = `<div class="autocomplete-item" style="color:var(--muted);cursor:default;font-style:italic;">No enrolled students found for "${q}"</div>`;
-        list.classList.add('show');
-        return;
-      }
-      // Drop anyone already on the receipt.
-      r.results = r.results.filter(function (s) {
-        return !selectedStudents.some(function (x) {
-          return studentKey(x.name, x.phone) === studentKey(s.studentName, s.phone);
-        });
-      });
-      if (!r.results.length) { closeSuggestions(); return; }
-      list._results = r.results;
-      list.innerHTML = r.results.map((s, i) =>
-        `<div class="autocomplete-item" data-idx="${i}">
+let studentCache = null, studentCacheAt = 0;
+const STUDENT_CACHE_MS = 5 * 60 * 1000;
+
+function invalidateStudentCache() { studentCache = null; }
+
+async function ensureStudentCache() {
+  if (studentCache && (Date.now() - studentCacheAt) < STUDENT_CACHE_MS) return studentCache;
+  const r = await api('listStudents');
+  studentCache = r.students || [];
+  studentCacheAt = Date.now();
+  return studentCache;
+}
+
+// Lower is better; -1 means no match. Ranking is what makes a short query
+// like "nai" useful when a dozen students match it.
+function rankMatch(name, raw, tokens) {
+  const n = name.toLowerCase();
+  if (n === raw) return 0;
+  if (n.indexOf(raw) === 0) return 1;
+  const words = n.split(/\s+/);
+  for (let i = 0; i < words.length; i++) if (words[i].indexOf(raw) === 0) return 2;
+  if (n.indexOf(raw) >= 0) return 3;
+  // Every typed word starting some word of the name: "nai sur" -> Naina Suraiya
+  const allStart = tokens.every(function (t) {
+    return words.some(function (wd) { return wd.indexOf(t) === 0; });
+  });
+  if (allStart) return 4;
+  const allSomewhere = tokens.every(function (t) { return n.indexOf(t) >= 0; });
+  if (allSomewhere) return 5;
+  return -1;
+}
+
+function filterStudents(list, q) {
+  const raw    = q.trim().toLowerCase();
+  const tokens = raw.split(/\s+/).filter(Boolean);
+  const scored = [];
+  list.forEach(function (s) {
+    if (selectedStudents.some(function (x) {
+          return studentKey(x.name, x.phone) === studentKey(s.studentName, s.phone); })) return;
+    const rank = rankMatch(s.studentName || '', raw, tokens);
+    if (rank < 0) return;
+    scored.push({ s: s, rank: rank });
+  });
+  scored.sort(function (a, b) {
+    if (a.rank !== b.rank) return a.rank - b.rank;
+    return (a.s.studentName || '').localeCompare(b.s.studentName || '');
+  });
+  return scored.slice(0, 8).map(function (x) { return x.s; });
+}
+
+function renderSuggestions(results, q) {
+  const list = document.getElementById('student-suggestions');
+  if (!results.length) {
+    list.innerHTML = `<div class="autocomplete-item" style="color:var(--muted);cursor:default;font-style:italic;">No enrolled students found for "${q}"</div>`;
+    list.classList.add('show');
+    return;
+  }
+  list._results = results;
+  list.innerHTML = results.map(function (s, i) {
+    const bits = [s.phone, s.program, s.location ? s.location.split('\u2013')[0].trim() : ''].filter(Boolean);
+    return `<div class="autocomplete-item" data-idx="${i}">
           <strong>${s.studentName}</strong>
-          <small>${hasLeft(s.status) ? '⚠ LEFT · ' : ''}${[s.phone, s.program, s.location ? s.location.split('\u2013')[0].trim() : ''].filter(Boolean).join(' · ') || 'no contact on record'}</small>
-        </div>`
-      ).join('');
-      list.querySelectorAll('.autocomplete-item[data-idx]').forEach(el => {
-        el.addEventListener('mousedown', e => {
-          e.preventDefault();
-          const s = list._results[parseInt(el.dataset.idx)];
-          if (s) { selectStudent(s.studentName, s.phone, s.program, s.location); }
-        });
-      });
-      list.classList.add('show');
-    } catch(e) {
-      console.error('Autocomplete error:', e);
-      const list = document.getElementById('student-suggestions');
-      list.innerHTML = `<div class="autocomplete-item" style="color:var(--danger);cursor:default;font-size:12px;">Search error — check connection</div>`;
-      list.classList.add('show');
-    }
-  }, 300);
-}
-
-// The Status cell is typed by hand in the sheet, so accept the same spellings
-// the roster import does rather than only the canonical "Left".
-const LEFT_WORDS = ['discontinue', 'discontinued', 'left', 'inactive',
-                    'stopped', 'quit', 'dropped', 'not continuing'];
-
-function hasLeft(status) {
-  const t = (status || '').toString().trim().toLowerCase();
-  if (!t) return false;
-  return LEFT_WORDS.some(function (w) { return t.indexOf(w) >= 0; });
-}
-
-// Receipts can cover several students; each pick becomes a removable chip.
-let selectedStudents = [];
-
-function studentKey(name, phone) {
-  return (name || '').toLowerCase() + '|' + (phone || '').replace(/\D/g, '');
-}
-
-function renderStudentChips() {
-  const box = document.getElementById('r-students');
-  if (!selectedStudents.length) { box.innerHTML = ''; box.style.display = 'none'; return; }
-  box.style.display = 'flex';
-  box.innerHTML = selectedStudents.map(function (s, i) {
-    return '<span class="chip">' + s.name +
-           '<button type="button" class="chip-x" data-i="' + i + '" title="Remove">&times;</button></span>';
+          <small>${bits.join(' \u00b7 ') || 'no contact on record'}</small>
+        </div>`;
   }).join('');
-  box.querySelectorAll('.chip-x').forEach(function (b) {
-    b.addEventListener('click', function () {
-      selectedStudents.splice(parseInt(b.dataset.i), 1);
-      renderStudentChips();
+  list.querySelectorAll('.autocomplete-item[data-idx]').forEach(function (el) {
+    el.addEventListener('mousedown', function (e) {
+      e.preventDefault();
+      const s = list._results[parseInt(el.dataset.idx)];
+      if (s) selectStudent(s.studentName, s.phone, s.program, s.location);
     });
   });
+  list.classList.add('show');
 }
 
-function clearSelectedStudents() {
-  selectedStudents = [];
-  renderStudentChips();
-}
+// Filters the cached roster locally, so typing is instant and replies can
+// never arrive out of order.
+function searchStudents(q) {
+  clearTimeout(searchTimeout);
+  if (!q || q.trim().length < 2) { closeSuggestions(); return; }
+  if (studentCache) { renderSuggestions(filterStudents(studentCache, q), q); return; }
 
-function addStudentChip(name, phone, program, location) {
-  const key = studentKey(name, phone);
-  const dup = selectedStudents.some(function (s) { return studentKey(s.name, s.phone) === key; });
-  if (!dup) selectedStudents.push({ name: name, phone: phone || '', program: program || '', location: location || '' });
-  renderStudentChips();
+  searchTimeout = setTimeout(async function () {
+    const list = document.getElementById('student-suggestions');
+    list.innerHTML = '<div class="autocomplete-item" style="color:var(--muted);cursor:default;font-style:italic;">Loading students\u2026</div>';
+    list.classList.add('show');
+    try {
+      const all = await ensureStudentCache();
+      const typed = document.getElementById('r-name').value;   // may have moved on
+      renderSuggestions(filterStudents(all, typed), typed);
+    } catch (e) {
+      list.innerHTML = '<div class="autocomplete-item" style="color:var(--danger);cursor:default;font-size:12px;">Could not load students \u2014 check connection</div>';
+      list.classList.add('show');
+    }
+  }, 150);
 }
 
 function selectStudent(name, phone, program, location) {

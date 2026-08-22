@@ -246,6 +246,10 @@ function doGet(e) {
         result = getEnrollments();
         break;
 
+      case 'listStudents':
+        result = listStudents();
+        break;
+
       case 'searchStudents':
         result = searchStudents(e.parameter.q || '');
         break;
@@ -399,6 +403,46 @@ function getEnrollments() {
     })
     .reverse();
   return { records };
+}
+
+// The whole active roster in one slim call. The autocomplete filters this
+// locally: a request per keystroke against Apps Script is slow, and replies
+// arriving out of order made the suggestions flicker between queries.
+function listStudents() {
+  const sheet = getSheet('Enrollments');
+  const data  = sheet.getDataRange().getValues();
+  if (data.length <= 1) return { students: [] };
+  const headers = data[0];
+
+  const col = function (name) {
+    const idx = headers.indexOf(name);
+    return function (row) {
+      return (idx >= 0 && row[idx] !== undefined && row[idx] !== null) ? row[idx].toString().trim() : '';
+    };
+  };
+  const nameAt = headers.indexOf('Student Name');
+  if (nameAt < 0) return { students: [] };
+
+  const seen = {}, students = [];
+  for (let i = data.length - 1; i >= 1; i--) {
+    const row  = data[i];
+    const name = (row[nameAt] === undefined || row[nameAt] === null) ? '' : row[nameAt].toString().trim();
+    if (!name) continue;
+    if (isLeftWord_(col('Status')(row))) continue;      // left students are not billable
+
+    const phone = col('Phone')(row) || col('WhatsApp')(row);
+    const key   = name.toLowerCase() + '|' + phone.replace(/\D/g, '');
+    if (seen[key]) continue;
+    seen[key] = true;
+    students.push({
+      studentName: name,
+      phone:    phone,
+      program:  col('Program')(row),
+      location: col('Location')(row),
+      status:   col('Status')(row)
+    });
+  }
+  return { students: students };
 }
 
 function searchStudents(q) {
