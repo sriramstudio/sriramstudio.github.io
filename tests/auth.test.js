@@ -512,5 +512,32 @@ check('  ...and is not listed as never invoiced',
       rep.indexOf('ACTIVE BUT NEVER INVOICED') < 0,
       rep.indexOf('ACTIVE BUT NEVER INVOICED'));
 
+console.log('');
+console.log('--- unbilled review ---');
+w = freshWorld('1234');
+w.sheets.Enrollments = makeSheet([dh,
+  dRow('SR-1', 'Tashvi Kocahr', ''),
+  dRow('SR-2', 'Never Paid', ''),
+  dRow('SR-3', 'Diya Sen', ''),
+  dRow('SR-4', 'Gone Away', '', 'Left')
+]);
+w.sheets.Receipts = makeSheet([
+  ['Receipt No','Issued At','Student Name','Contact','Amount (₹)','Fee Month',
+   'Fee Year','Payment Mode','UPI Reference','Fee Type','Date Received','Note'],
+  ['SS-1','01 Aug 2026','Tashvi Kochar','9','2000','August','2026','Cash','','Monthly Fee','',''],
+  ['SS-2','01 Aug 2026','Riya Sen & Diya Sen','9','3000','August','2026','Cash','','Monthly Fee','','']
+]);
+var ub = w.sandbox.reviewUnbilledStudents();
+check('a transposed surname is called a spelling difference',
+      ub.indexOf('Probably a spelling difference               : 1') >= 0,
+      'see the log');
+check('  ...and names the receipt spelling', ub.indexOf('tashvi kochar') >= 0, 'no suggestion');
+check('a genuine non-payer is separated out',
+      ub.indexOf('genuinely never invoiced    : 1') >= 0, 'see the log');
+check('a clubbed sibling is not listed at all',
+      ub.indexOf('Diya Sen') < 0, 'Diya Sen wrongly listed');
+check('a student who has left is excluded',
+      ub.indexOf('Gone Away') < 0, 'Gone Away wrongly listed');
+
 console.log('\n' + (fail === 0 ? 'ALL ' + pass + ' CHECKS PASSED' : pass + ' passed, ' + fail + ' FAILED'));
 process.exit(fail === 0 ? 0 : 1);

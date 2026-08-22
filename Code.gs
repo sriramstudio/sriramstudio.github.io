@@ -1438,3 +1438,120 @@ function findDuplicateStudents() {
   Logger.log(out);
   return out;
 }
+
+
+// ─── Unbilled review (read-only, editor only) ─────────────────
+// Some students look unbilled only because the roster spells them differently
+// from the receipt history — "Tashvi Kocahr" against "Tashvi Kochar". This
+// separates a misspelling from someone who genuinely has never paid, so the
+// remainder is a collections list rather than a list of data errors.
+
+function levenshtein_(a, b) {
+  a = a.toLowerCase(); b = b.toLowerCase();
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  let prev = [];
+  for (let j = 0; j <= b.length; j++) prev[j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1,
+                        prev[j - 1] + (a.charAt(i - 1) === b.charAt(j - 1) ? 0 : 1));
+    }
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+function reviewUnbilledStudents() {
+  const norm  = function (v) { return (v === null || v === undefined) ? '' : v.toString().trim(); };
+  const eData = getSheet('Enrollments').getDataRange().getValues();
+  const rData = getSheet('Receipts').getDataRange().getValues();
+  const eHead = eData[0].map(norm);
+  const rHead = rData[0].map(norm);
+
+  const eName = eHead.indexOf('Student Name');
+  const eStat = eHead.indexOf('Status');
+  const ePh   = eHead.indexOf('Phone');
+  const rName = rHead.indexOf('Student Name');
+  const rStu  = rHead.indexOf('Students');
+
+  // Every name the receipts know about, and the blobs to search within.
+  const paid = {}, blobs = [], receiptNames = {};
+  for (let i = 1; i < rData.length; i++) {
+    const rawStu = rStu >= 0 ? norm(rData[i][rStu]) : '';
+    const whole  = rawStu ? rawStu.replace(/\|/g, ' ') : norm(rData[i][rName]);
+    const blob   = normName_(whole);
+    if (!blob) continue;
+    blobs.push(blob);
+    (rawStu ? rawStu.split('|') : [norm(rData[i][rName])]).forEach(function (nm) {
+      const k = normName_(nm);
+      if (!k) return;
+      paid[k] = true;
+      receiptNames[k] = (receiptNames[k] || 0) + 1;
+    });
+  }
+  const receiptKeys = Object.keys(receiptNames);
+
+  // Active students the receipts cannot account for.
+  const unbilled = [];
+  for (let r = 1; r < eData.length; r++) {
+    const raw = norm(eData[r][eName]);
+    if (!raw) continue;
+    if (isLeftWord_(norm(eData[r][eStat]))) continue;
+    const key = normName_(raw);
+    if (paid[key]) continue;
+    let inBlob = false;
+    for (let b = 0; b < blobs.length; b++) {
+      if (blobs[b].indexOf(key) >= 0) { inBlob = true; break; }
+    }
+    if (inBlob) continue;
+    unbilled.push({ row: r + 1, name: raw, key: key, phone: norm(eData[r][ePh]) });
+  }
+
+  // Nearest receipt name for each.
+  const likelyTypo = [], genuine = [];
+  unbilled.forEach(function (u) {
+    let best = null, bestD = 99;
+    for (let i = 0; i < receiptKeys.length; i++) {
+      const d = levenshtein_(u.key, receiptKeys[i]);
+      if (d < bestD) { bestD = d; best = receiptKeys[i]; }
+    }
+    const tolerance = Math.max(2, Math.floor(u.key.length * 0.25));
+    if (best && bestD <= tolerance) {
+      likelyTypo.push({ name: u.name, row: u.row, near: best, d: bestD, n: receiptNames[best] });
+    } else {
+      genuine.push({ name: u.name, row: u.row, phone: u.phone, near: best, d: bestD });
+    }
+  });
+
+  let out = 'UNBILLED STUDENTS - REVIEW\n==========================\n';
+  out += 'Active students the receipts cannot account for : ' + unbilled.length + '\n';
+  out += '  Probably a spelling difference               : ' + likelyTypo.length + '\n';
+  out += '  No close match - genuinely never invoiced    : ' + genuine.length + '\n\n';
+
+  if (likelyTypo.length) {
+    likelyTypo.sort(function (a, b) { return a.d - b.d; });
+    out += 'PROBABLY THE SAME CHILD, SPELLED DIFFERENTLY\n';
+    out += 'Fix the spelling in Enrollments and they stop showing as unpaid.\n\n';
+    likelyTypo.forEach(function (x) {
+      out += '  row ' + pad_(x.row, 6) + pad_('"' + x.name + '"', 28) +
+             ' receipts say "' + x.near + '"  (' + x.d + ' char, ' + x.n + ' receipt(s))\n';
+    });
+    out += '\n';
+  }
+
+  if (genuine.length) {
+    out += 'NO MATCHING RECEIPT AT ALL - the actual collections list\n\n';
+    genuine.forEach(function (x) {
+      out += '  row ' + pad_(x.row, 6) + pad_('"' + x.name + '"', 28) +
+             pad_(x.phone || '(no phone)', 14) + 'nearest: "' + x.near + '" (' + x.d + ' off)\n';
+    });
+    out += '\n';
+  }
+
+  out += 'Report only. Nothing was changed.\n';
+  Logger.log(out);
+  return out;
+}
