@@ -513,7 +513,8 @@ function buildLegacyRoster_() {
 
   const lHead  = lData[0].map(norm);
   const nameAt = findColumn_(lHead, ['student name', 'name']);
-  const phoneAt = findColumn_(lHead, ['phone', 'contact', 'mobile', 'whatsapp']);
+  const phoneAt  = findColumn_(lHead, ['phone', 'contact', 'mobile', 'whatsapp']);
+  const centreAt = findColumn_(lHead, ['center', 'centre', 'location', 'branch']);
   if (nameAt < 0) return { error: 'No name column found. Headers: ' + lHead.join(' | ') };
 
   // Existing enrollments, keyed by name + phone digits.
@@ -535,7 +536,8 @@ function buildLegacyRoster_() {
     const n = norm(lData[i][nameAt]);
     if (!n) continue;
     const p = phoneAt >= 0 ? norm(lData[i][phoneAt]) : '';
-    const rec = { row: i + 1, name: n, phone: p, digits: digits(p) };
+    const c = centreAt >= 0 ? norm(lData[i][centreAt]) : '';
+    const rec = { row: i + 1, name: n, phone: p, digits: digits(p), centre: c };
     rows.push(rec);
     const k = n.toLowerCase();
     (byName[k] = byName[k] || []).push(rec);
@@ -558,6 +560,7 @@ function buildLegacyRoster_() {
     nameHeader: lHead[nameAt],
     phoneHeader: phoneAt >= 0 ? lHead[phoneAt] : null,
     headers: lHead,
+    centreHeader: centreAt >= 0 ? lHead[centreAt] : null,
     total: rows.length,
     toAdd: toAdd, already: already, blocked: blocked,
     dupes: dupes, byName: byName, eHead: eData[0].map(norm)
@@ -572,6 +575,7 @@ function previewLegacyStudents() {
   out += 'Tab headers   : ' + r.headers.join(' | ') + '\n';
   out += 'Name column   : "' + r.nameHeader + '"\n';
   out += 'Phone column  : ' + (r.phoneHeader ? '"' + r.phoneHeader + '"' : 'NONE FOUND') + '\n';
+  out += 'Centre column : ' + (r.centreHeader ? '"' + r.centreHeader + '"' : 'NONE FOUND') + '\n';
   out += 'Names listed  : ' + r.total + '\n\n';
 
   out += 'Will be added as "Existing Student" : ' + r.toAdd.length + '\n';
@@ -595,11 +599,19 @@ function previewLegacyStudents() {
     out += '\n';
   }
 
+  // Apps Script truncates long logs, so show a sample rather than all of them.
   if (r.toAdd.length) {
-    out += 'TO BE ADDED:\n';
-    r.toAdd.forEach(function (x) {
-      out += '  ' + x.name + '   ' + (x.phone || '(no phone)') + '\n';
-    });
+    const withPhone  = r.toAdd.filter(function (x) { return !!x.digits; }).length;
+    const withCentre = r.toAdd.filter(function (x) { return !!x.centre; }).length;
+    out += 'Of those to add: ' + withPhone + ' have a phone, ' + withCentre + ' have a centre.\n\n';
+    out += 'SAMPLE (first 10 and last 5 of ' + r.toAdd.length + '):\n';
+    const show = function (x) {
+      out += '  ' + x.name + '   ' + (x.phone || '(no phone)') +
+             '   ' + (x.centre || '(no centre)') + '\n';
+    };
+    r.toAdd.slice(0, 10).forEach(show);
+    if (r.toAdd.length > 15) out += '  ... ' + (r.toAdd.length - 15) + ' more ...\n';
+    if (r.toAdd.length > 10) r.toAdd.slice(-5).forEach(show);
   }
 
   out += '\nNothing was changed. Report only.\n';
@@ -627,6 +639,7 @@ function importLegacyStudents() {
     row[idx('Student Name')] = rec.name;
     row[idx('Phone')]        = rec.phone;
     row[idx('WhatsApp')]     = rec.phone;
+    row[idx('Location')]     = rec.centre;
     row[idx('Notes')]        = 'Legacy roster - imported from Legacy Students tab';
     return row;
   });
