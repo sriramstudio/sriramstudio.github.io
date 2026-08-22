@@ -904,3 +904,104 @@ function importLegacyStudents() {
   Logger.log(msg);
   return msg;
 }
+
+
+// ─── Column audit (read-only, editor only) ────────────────────
+// Reports where values actually sit versus what the headers claim, so a
+// misalignment can be diagnosed before anything is moved. Writes nothing.
+
+function colLetter_(n) {
+  let out = '';
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    out = String.fromCharCode(65 + rem) + out;
+    n = Math.floor((n - 1) / 26);
+  }
+  return out;
+}
+
+function auditEnrollments() {
+  const sheet = getSheet('Enrollments');
+  const data  = sheet.getDataRange().getValues();
+  const norm  = function (v) { return (v === null || v === undefined) ? '' : v.toString().trim(); };
+  if (data.length <= 1) { Logger.log('No data rows.'); return 'No data rows.'; }
+
+  const head = data[0].map(norm);
+  let out = 'ENROLLMENTS COLUMN AUDIT\n========================\n';
+  out += 'Data rows : ' + (data.length - 1) + '\n';
+  out += 'Columns   : ' + head.length + '\n\n';
+
+  out += 'PER COLUMN  [count filled]  sample values\n';
+  out += '-----------------------------------------\n';
+  for (let c = 0; c < head.length; c++) {
+    let filled = 0;
+    const samples = [];
+    for (let r = 1; r < data.length; r++) {
+      const v = norm(data[r][c]);
+      if (!v) continue;
+      filled++;
+      if (samples.length < 2 && samples.indexOf(v) < 0) {
+        samples.push(v.length > 28 ? v.substring(0, 28) + '~' : v);
+      }
+    }
+    out += colLetter_(c + 1) + ' ' + (head[c] || '(no header)') + '  [' + filled + ']';
+    if (samples.length) out += '  e.g. ' + samples.join('  /  ');
+    out += '\n';
+  }
+
+  // Values that clearly sit in the wrong place.
+  out += '\nMISPLACED VALUES\n----------------\n';
+  const iLoc = head.indexOf('Location');
+  let flagged = 0;
+  for (let c = 0; c < head.length; c++) {
+    if (c === iLoc) continue;
+    let hits = 0;
+    let example = '';
+    for (let r = 1; r < data.length; r++) {
+      const v = norm(data[r][c]);
+      if (v && matchCentre_(v)) { hits++; if (!example) example = v; }
+    }
+    if (hits) {
+      flagged++;
+      out += 'Centre name in ' + colLetter_(c + 1) + ' "' + (head[c] || '?') +
+             '" on ' + hits + ' row(s), e.g. "' + example + '"\n';
+    }
+  }
+  if (!flagged) out += 'No centre names found outside Location.\n';
+
+  Logger.log(out);
+  return out;
+}
+
+// Dumps single rows header-by-header so a shift is visible directly.
+// Pass nothing for a spread of rows, or a number for one specific row.
+function auditEnrollmentRow(rowNumber) {
+  const sheet = getSheet('Enrollments');
+  const data  = sheet.getDataRange().getValues();
+  const norm  = function (v) { return (v === null || v === undefined) ? '' : v.toString().trim(); };
+  const head  = data[0].map(norm);
+
+  let rows;
+  if (rowNumber) rows = [rowNumber];
+  else {
+    rows = [2, 3, 4];
+    const mid = Math.floor(data.length / 2);
+    if (mid > 4) rows.push(mid);
+    if (data.length - 1 > 5) rows.push(data.length - 1, data.length);
+  }
+
+  let out = 'ROW DUMP (non-empty cells only)\n===============================\n';
+  rows.forEach(function (rn) {
+    if (rn < 2 || rn > data.length) return;
+    out += '\n--- sheet row ' + rn + ' ---\n';
+    const row = data[rn - 1];
+    for (let c = 0; c < head.length; c++) {
+      const v = norm(row[c]);
+      if (!v) continue;
+      out += '  ' + colLetter_(c + 1) + ' ' + (head[c] || '(no header)') + ' = ' +
+             (v.length > 40 ? v.substring(0, 40) + '~' : v) + '\n';
+    }
+  });
+  Logger.log(out);
+  return out;
+}
