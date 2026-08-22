@@ -188,7 +188,7 @@ in `register.html`), so the PIN is the only thing between a visitor and the
 student database. Ten wrong attempts locks the endpoint for 15 minutes.
 
 - **Enroll tab** → 3 modes: New Admission, Workshop, Existing Student (for adding your current roster)
-- **Receipt tab** → PIN-protected. Type a name (autocompletes from records), enter amount, fee type, date received, note → Generate → Copy for WhatsApp or Print/Save PDF
+- **Receipt tab** → Type a name and pick from the autocomplete; the student becomes a chip. **Pick more than one to club siblings onto a single receipt** — one amount, one receipt number, all names printed. Remove a chip with its ×. Typing a name without picking still works for someone not yet in the database. Then amount, fee type, date received, note → Generate → Copy for WhatsApp or Print/Save PDF
 - **Records tab** → view/search/filter all enrollments, applications, and receipts
 
 ### ID formats
@@ -256,7 +256,12 @@ centre and a status for the same student.
 *(Program, Batch, Pracheen columns are legacy — no longer filled by the forms but kept for old records.)*
 
 **Receipts tab columns:**
-Receipt No · Issued At · Student Name · Contact · Amount (₹) · Fee Month · Fee Year · Payment Mode · UPI Reference · Fee Type · Date Received · Note
+Receipt No · Issued At · Student Name · Contact · Amount (₹) · Fee Month · Fee Year · Payment Mode · UPI Reference · Fee Type · Date Received · Note · **Students**
+
+One receipt can cover several students — siblings are usually paid for together
+with a single clubbed amount. `Students` holds the names separately (`A | B`)
+so the data stays queryable; `Student Name` keeps the combined display string
+(`A & B`) that appears on the printed receipt.
 
 **Config tab keys:**
 - `pin` — admin panel PIN (default 1234)
