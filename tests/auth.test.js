@@ -53,7 +53,7 @@ function freshWorld(pin) {
        'Guardian', 'Mother', '9999', '9999', 'a@b.c', '12 Somewhere Rd', '', 'Bhawanipur',
        '', '', '', '', '', '', '', '']
     ]),
-    Receipts: makeSheet([['Receipt No', 'Issued At', 'Student Name', 'Contact', 'Amount',
+    Receipts: makeSheet([['Receipt No', 'Issued At', 'Student Name', 'Contact', 'Amount (₹)',
                           'Fee Month', 'Fee Year', 'Payment Mode', 'UPI Reference', 'Fee Type',
                           'Date Received', 'Note']])
   };
@@ -231,6 +231,37 @@ check('  ...and neither is silently dropped',
 var solo = roster.toAdd.filter(function (x) { return x.name === 'Solo Student'; })[0];
 check('a leaving word in Center becomes the status, not a branch',
       solo && solo.status === 'Left' && !solo.centre, solo);
+
+console.log('\n--- one receipt, several students ---');
+w = freshWorld('1234');
+var recSheet = w.sheets.Receipts;
+check('Receipts starts without a Students column',
+      recSheet._data[0].indexOf('Students') < 0, recSheet._data[0]);
+r = call(w, { action: 'addReceipt', pin: '1234',
+              data: enc({ studentName: 'Riya Sen & Diya Sen',
+                          students: ['Riya Sen', 'Diya Sen'],
+                          amount: '3000', feeType: 'Monthly Fee' }) });
+check('receipt is created', r.success === true && !!r.receiptNo, r);
+var sAt = recSheet._data[0].indexOf('Students');
+check('  ...the Students column is added on demand', sAt >= 0, recSheet._data[0]);
+var last = recSheet._data[recSheet._data.length - 1];
+check('  ...both names are stored separately', last[sAt] === 'Riya Sen | Diya Sen', last[sAt]);
+check('  ...and Student Name keeps the combined display string',
+      last[recSheet._data[0].indexOf('Student Name')] === 'Riya Sen & Diya Sen',
+      last[recSheet._data[0].indexOf('Student Name')]);
+check('  ...with one clubbed amount, not one per child',
+      last[recSheet._data[0].indexOf('Amount (\u20b9)')] === '3000',
+      last[recSheet._data[0].indexOf('Amount (\u20b9)')]);
+
+// A single-student receipt must still behave exactly as before.
+var widthBefore = recSheet._data[0].length;
+r = call(w, { action: 'addReceipt', pin: '1234',
+              data: enc({ studentName: 'Solo Student', amount: '1500' }) });
+last = recSheet._data[recSheet._data.length - 1];
+check('a single-student receipt still works', r.success === true, r);
+check('  ...and falls back to the one name', last[sAt] === 'Solo Student', last[sAt]);
+check('  ...without adding the column twice',
+      recSheet._data[0].length === widthBefore, recSheet._data[0].length);
 
 console.log('\n' + (fail === 0 ? 'ALL ' + pass + ' CHECKS PASSED' : pass + ' passed, ' + fail + ' FAILED'));
 process.exit(fail === 0 ? 0 : 1);

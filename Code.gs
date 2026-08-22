@@ -41,7 +41,7 @@ function initHeaders(sheet, name) {
   } else if (name === 'Receipts') {
     const h = ['Receipt No','Issued At','Student Name','Contact',
       'Amount (₹)','Fee Month','Fee Year','Payment Mode','UPI Reference',
-      'Fee Type','Date Received','Note'];
+      'Fee Type','Date Received','Note','Students'];
     sheet.appendRow(h);
     sheet.getRange(1,1,1,h.length).setFontWeight('bold')
       .setBackground('#2C1A0E').setFontColor('#FFFFFF');
@@ -371,7 +371,24 @@ function deleteEnrollment(id) {
 }
 
 // ─── Receipts ─────────────────────────────────────────────────
+// One receipt can cover several students — siblings are usually paid for
+// together with a single clubbed amount. 'Student Name' keeps the combined
+// display string so older receipts and the Records tab are unaffected;
+// 'Students' holds the names separately so the data stays queryable.
+function ensureReceiptStudentsColumn_() {
+  const sheet = getSheet('Receipts');
+  const width = Math.max(1, sheet.getLastColumn());
+  const head  = sheet.getRange(1, 1, 1, width).getValues()[0]
+                     .map(function (v) { return (v === null ? '' : v.toString().trim()); });
+  const at = head.indexOf('Students');
+  if (at >= 0) return at;
+  sheet.getRange(1, width + 1).setValue('Students')
+       .setFontWeight('bold').setBackground('#2C1A0E').setFontColor('#FFFFFF');
+  return width;
+}
+
 function addReceipt(d) {
+  ensureReceiptStudentsColumn_();
   const sheet   = getSheet('Receipts');
   const config  = getSheet('Config');
   const cfgData = config.getDataRange().getValues();
@@ -400,7 +417,8 @@ function addReceipt(d) {
     d.upiRef        || '',
     d.feeType       || 'Monthly Fee',
     d.dateReceived  || '',
-    d.note          || ''
+    d.note          || '',
+    (d.students && d.students.length) ? d.students.join(' | ') : (d.studentName || '')
   ]);
 
   return { success: true, receiptNo, issuedAt };
