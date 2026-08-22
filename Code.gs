@@ -519,8 +519,35 @@ function ensureReceiptStudentsColumn_() {
   return width;
 }
 
+// Apps Script responses are slow enough that a receipt can save while the
+// panel shows a connection error, and the natural reaction is to press
+// Generate again. Six consecutive receipt numbers for one student at one
+// timestamp is what that looks like in the data. Remembering each receipt
+// briefly makes a retry return the original instead of minting another.
+const RECEIPT_DUP_WINDOW_SEC = 15 * 60;
+
+function receiptFingerprint_(d) {
+  const who = (d.students && d.students.length)
+    ? d.students.map(normName_).sort().join('+')
+    : normName_(d.studentName);
+  const fp = 'rcpt|' + who + '|' + (d.month || '') + (d.year || '') +
+             '|' + (d.amount || '') + '|' + (d.feeType || '');
+  return fp.substring(0, 240);
+}
+
 function addReceipt(d) {
   ensureReceiptStudentsColumn_();
+
+  // Same student(s), period, amount and fee type within the window: this is a
+  // retry, not a second payment. A genuine second payment differs in amount or
+  // falls outside it, and either way the duplicate report still catches it.
+  const cache = CacheService.getScriptCache();
+  const fp    = receiptFingerprint_(d);
+  const seen  = cache.get(fp);
+  if (seen) {
+    const parts = seen.split('||');
+    return { success: true, receiptNo: parts[0], issuedAt: parts[1], duplicate: true };
+  }
   const sheet   = getSheet('Receipts');
   const config  = getSheet('Config');
   const cfgData = config.getDataRange().getValues();
@@ -553,6 +580,7 @@ function addReceipt(d) {
     (d.students && d.students.length) ? d.students.join(' | ') : (d.studentName || '')
   ]);
 
+  cache.put(fp, receiptNo + '||' + issuedAt, RECEIPT_DUP_WINDOW_SEC);
   return { success: true, receiptNo, issuedAt };
 }
 

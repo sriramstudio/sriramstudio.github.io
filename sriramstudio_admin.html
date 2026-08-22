@@ -1279,13 +1279,15 @@ async function generateReceipt() {
     if (r.error) throw new Error(r.error);
     data.receiptNum = r.receiptNo;
     data.issuedAt   = r.issuedAt;
+    // The backend recognised this as a retry and returned the original.
+    if (r.duplicate) toast('Already issued as ' + r.receiptNo + ' \u2014 showing that one', 'info');
     currentReceiptData = data;
     renderReceipt(data);
     document.getElementById('receipt-form-view').style.display    = 'none';
     document.getElementById('receipt-preview-view').style.display = 'block';
     // mirror to print target
     document.getElementById('print-target').innerHTML = document.getElementById('receipt-output').innerHTML;
-    toast('Receipt saved ✓', 'success');
+    if (!r.duplicate) toast('Receipt saved ✓', 'success');
   } catch(e) {
     toast('Failed to save receipt. Check connection.', 'error');
   }

@@ -628,5 +628,40 @@ check('  ...and are excluded from the money at stake',
 check('dates are formatted, not raw Date objects',
       dc.indexOf('GMT+') < 0, 'raw dates still present');
 
+console.log('');
+console.log('--- receipt retries are idempotent ---');
+w = freshWorld('1234');
+var payload = { studentName: 'Divitaa Taparia', students: ['Divitaa Taparia'],
+                amount: '1900', month: 'August', year: '2026', feeType: 'Monthly Fee' };
+r = call(w, { action: 'addReceipt', pin: '1234', data: enc(payload) });
+var firstNo = r.receiptNo;
+check('the first receipt is created', r.success === true && !!firstNo, r);
+check('  ...and is not flagged as a repeat', !r.duplicate, r);
+var rowsAfterFirst = w.sheets.Receipts._data.length;
+
+var again = call(w, { action: 'addReceipt', pin: '1234', data: enc(payload) });
+check('a retry does not mint a second number',
+      again.receiptNo === firstNo, [firstNo, again.receiptNo]);
+check('  ...is marked as a duplicate for the panel', again.duplicate === true, again);
+check('  ...and writes no extra row',
+      w.sheets.Receipts._data.length === rowsAfterFirst,
+      [rowsAfterFirst, w.sheets.Receipts._data.length]);
+
+// A genuinely different payment must still go through.
+var other = call(w, { action: 'addReceipt', pin: '1234',
+  data: enc({ studentName: 'Divitaa Taparia', students: ['Divitaa Taparia'],
+              amount: '500', month: 'August', year: '2026', feeType: 'Monthly Fee' }) });
+check('a different amount still creates a receipt',
+      other.receiptNo !== firstNo && !other.duplicate, other);
+
+// Sibling order must not defeat the check.
+var sib = { studentName: 'A & B', students: ['B Kid', 'A Kid'], amount: '3000',
+            month: 'August', year: '2026', feeType: 'Monthly Fee' };
+var s1 = call(w, { action: 'addReceipt', pin: '1234', data: enc(sib) });
+sib.students = ['A Kid', 'B Kid'];
+var s2 = call(w, { action: 'addReceipt', pin: '1234', data: enc(sib) });
+check('a clubbed retry in the other order is still caught',
+      s2.receiptNo === s1.receiptNo, [s1.receiptNo, s2.receiptNo]);
+
 console.log('\n' + (fail === 0 ? 'ALL ' + pass + ' CHECKS PASSED' : pass + ' passed, ' + fail + ' FAILED'));
 process.exit(fail === 0 ? 0 : 1);
