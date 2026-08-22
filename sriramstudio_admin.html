@@ -1100,7 +1100,7 @@ function searchStudents(q) {
       list.innerHTML = r.results.map((s, i) =>
         `<div class="autocomplete-item" data-idx="${i}">
           <strong>${s.studentName}</strong>
-          <small>${[s.phone, s.program, s.location ? s.location.split('\u2013')[0].trim() : ''].filter(Boolean).join(' · ') || 'no contact on record'}</small>
+          <small>${s.status === 'Left' ? '⚠ LEFT · ' : ''}${[s.phone, s.program, s.location ? s.location.split('\u2013')[0].trim() : ''].filter(Boolean).join(' · ') || 'no contact on record'}</small>
         </div>`
       ).join('');
       list.querySelectorAll('.autocomplete-item[data-idx]').forEach(el => {

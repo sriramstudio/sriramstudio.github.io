@@ -10,11 +10,31 @@ function makeSheet(rows) {
     getDataRange: () => ({ getValues: () => data.map(r => r.slice()) }),
     appendRow: r => data.push(r.slice()),
     deleteRow: i => data.splice(i - 1, 1),
-    getRange(r, c) {
-      return {
-        setValue: v => { while (data.length < r) data.push([]); data[r - 1][c - 1] = v; },
-        setFontWeight: () => chain, setBackground: () => chain, setFontColor: () => chain
+    getLastRow: () => data.length,
+    getLastColumn: () => data.reduce((m, r) => Math.max(m, r.length), 0),
+    getRange(r, c, numRows, numCols) {
+      const range = {
+        setValue: v => { while (data.length < r) data.push([]); data[r - 1][c - 1] = v; return range; },
+        setValues: vals => {
+          vals.forEach((rowVals, ri) => {
+            while (data.length < r + ri) data.push([]);
+            rowVals.forEach((v, ci) => { data[r + ri - 1][c + ci - 1] = v; });
+          });
+          return range;
+        },
+        getValues: () => {
+          const out = [];
+          for (let i = 0; i < (numRows || 1); i++) {
+            const row = data[r + i - 1] || [];
+            const slice = [];
+            for (let j = 0; j < (numCols || 1); j++) slice.push(row[c + j - 1] !== undefined ? row[c + j - 1] : '');
+            out.push(slice);
+          }
+          return out;
+        },
+        setFontWeight: () => range, setBackground: () => range, setFontColor: () => range
       };
+      return range;
     },
     setFrozenRows() {}, setColumnWidth() {}
   };
@@ -28,7 +48,7 @@ function freshWorld(pin) {
       ['ID', 'Enrolled At', 'Type', 'Student Name', 'Date of Birth', 'Gender', 'Blood Group',
        'School/College', 'Guardian Name', 'Relation', 'Phone', 'WhatsApp', 'Email', 'Address',
        'Program', 'Location', 'Batch', 'Joining Date', 'Pracheen Kala Kendra', 'Workshop Name',
-       'Workshop Date', 'Workshop Fee', 'Heard From', 'Notes'],
+       'Workshop Date', 'Workshop Fee', 'Heard From', 'Notes', 'Status'],
       ['SR-2026-0101', '01 Jan 2026', 'New Admission', 'Test Child', '2015-01-01', 'F', '', '',
        'Guardian', 'Mother', '9999', '9999', 'a@b.c', '12 Somewhere Rd', '', 'Bhawanipur',
        '', '', '', '', '', '', '', '']
@@ -156,6 +176,32 @@ check('previewLegacyStudents with NO pin is refused', r.auth === true, r);
 r = call(w, { action: 'previewLegacyStudents', pin: '1234' });
 check('  ...and is not a routed action even WITH the pin',
       typeof r.error === 'string' && r.error.indexOf('Unknown action') === 0, r);
+
+console.log('\n--- Status column ---');
+w = freshWorld('1234');
+r = call(w, { action: 'addEnrollment', pin: '1234',
+              data: enc({ mode: 'legacy', studentName: 'Status Kid', phone: '7777777777' }) });
+check('new enrolment is created', r.success === true, r);
+var eRows = w.sheets.Enrollments._data;
+var statusAt = eRows[0].indexOf('Status');
+check('Status is a column on a fresh sheet', statusAt >= 0, eRows[0].length);
+check('  ...and a new enrolment is marked Active',
+      eRows[eRows.length - 1][statusAt] === 'Active', eRows[eRows.length - 1][statusAt]);
+r = call(w, { action: 'searchStudents', q: 'Status Kid', pin: '1234' });
+check('search reports the status', r.results && r.results[0] && r.results[0].status === 'Active',
+      r.results && r.results[0]);
+
+// The live sheet predates the column, so the migration has to add it.
+w = freshWorld('1234');
+var enr = w.sheets.Enrollments;
+enr._data[0] = enr._data[0].filter(function (h) { return h !== 'Status'; });
+var before = enr._data[0].length;
+var at1 = w.sandbox.ensureStatusColumn_();
+check('migration appends Status when missing', enr._data[0][at1] === 'Status', enr._data[0]);
+check('  ...at the end, disturbing no existing column', at1 === before, [at1, before]);
+var at2 = w.sandbox.ensureStatusColumn_();
+check('  ...and is idempotent', at2 === at1 && enr._data[0].length === before + 1,
+      [at1, at2, enr._data[0].length]);
 
 console.log('\n' + (fail === 0 ? 'ALL ' + pass + ' CHECKS PASSED' : pass + ' passed, ' + fail + ' FAILED'));
 process.exit(fail === 0 ? 0 : 1);

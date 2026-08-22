@@ -30,7 +30,7 @@ function initHeaders(sheet, name) {
       'Blood Group','School/College','Guardian Name','Relation','Phone','WhatsApp',
       'Email','Address','Program','Location','Batch','Joining Date',
       'Pracheen Kala Kendra','Workshop Name','Workshop Date','Workshop Fee',
-      'Heard From','Notes'];
+      'Heard From','Notes','Status'];
     sheet.appendRow(h);
     sheet.getRange(1,1,1,h.length).setFontWeight('bold')
       .setBackground('#2C1A0E').setFontColor('#FFFFFF');
@@ -57,6 +57,46 @@ function initHeaders(sheet, name) {
     sheet.appendRow(['callmebot_key', '']);
     sheet.getRange(1,1,1,2).setFontWeight('bold');
   }
+}
+
+// ─── Status column ────────────────────────────────────────────
+// 'Status' was added after the sheet was already in use, so initHeaders
+// never runs for it. Anything blank counts as active.
+const STATUS_LEFT   = 'Left';
+const STATUS_ACTIVE = 'Active';
+// Words that have been used in the sheet to mean the student has left.
+const LEFT_WORDS = ['discontinue', 'discontinued', 'left', 'inactive',
+                    'stopped', 'quit', 'dropped', 'not continuing'];
+
+function isLeftWord_(v) {
+  const t = (v || '').toString().trim().toLowerCase();
+  if (!t) return false;
+  for (let i = 0; i < LEFT_WORDS.length; i++) {
+    if (t.indexOf(LEFT_WORDS[i]) >= 0) return true;
+  }
+  return false;
+}
+
+// Returns the zero-based index of the Status column, creating it if needed.
+function ensureStatusColumn_() {
+  const sheet = getSheet('Enrollments');
+  const width = Math.max(1, sheet.getLastColumn());
+  const head  = sheet.getRange(1, 1, 1, width).getValues()[0]
+                     .map(function (v) { return (v === null ? '' : v.toString().trim()); });
+  const at = head.indexOf('Status');
+  if (at >= 0) return at;
+  const col = width + 1;
+  sheet.getRange(1, col).setValue('Status')
+       .setFontWeight('bold').setBackground('#2C1A0E').setFontColor('#FFFFFF');
+  return col - 1;
+}
+
+// Run once by hand if you want the column created ahead of an import.
+function addStatusColumn() {
+  const at = ensureStatusColumn_();
+  const msg = 'Status column is at position ' + (at + 1) + '.';
+  Logger.log(msg);
+  return msg;
 }
 
 // ─── Main handler ─────────────────────────────────────────────
@@ -249,7 +289,8 @@ function addEnrollment(d) {
     d.workshopDate || '',
     d.workshopFee ? '₹' + d.workshopFee : '',
     d.hearFrom || '',
-    d.notes || ''
+    d.notes || '',
+    STATUS_ACTIVE
   ]);
 
   // Send notifications for self-registered applications only
@@ -308,7 +349,8 @@ function searchStudents(q) {
         studentName: name,
         phone:    phone,
         program:  col('Program')(row),
-        location: col('Location')(row)
+        location: col('Location')(row),
+        status:   col('Status')(row)
       });
       if (results.length >= 6) break;
     }
@@ -533,6 +575,7 @@ function buildLegacyRoster_() {
   const nameAt   = findColumn_(lHead, ['student name', 'name']);
   const phoneAt  = findColumn_(lHead, ['phone', 'contact', 'mobile', 'whatsapp']);
   const centreAt = findColumn_(lHead, ['center', 'centre', 'location', 'branch']);
+  const statusAt = findColumn_(lHead, ['status', 'active', 'current']);
   if (nameAt < 0) return { error: 'No name column found. Headers: ' + lHead.join(' | ') };
 
   const eData  = getSheet('Enrollments').getDataRange().getValues();
@@ -540,7 +583,8 @@ function buildLegacyRoster_() {
   const eName  = eHead.indexOf('Student Name');
   const ePhone = eHead.indexOf('Phone');
   const eWa    = eHead.indexOf('WhatsApp');
-  const eLoc   = eHead.indexOf('Location');
+  const eLoc    = eHead.indexOf('Location');
+  const eStatus = ensureStatusColumn_();
 
   // Everyone already in Enrollments, indexed by name.
   const byExisting = {};
@@ -552,7 +596,8 @@ function buildLegacyRoster_() {
       sheetRow: i + 1,
       phone:    norm(eData[i][ePhone]),
       digits:   digits(eData[i][ePhone]),
-      location: norm(eData[i][eLoc])
+      location: norm(eData[i][eLoc]),
+      status:   norm(eData[i][eStatus])
     });
   }
 
@@ -571,7 +616,13 @@ function buildLegacyRoster_() {
     rec.centreRaw = rec.centre;
     const mapped  = matchCentre_(rec.centre);
     rec.centre    = mapped || '';                        // only real branches
-    rec.centreNote = (!mapped && rec.centreRaw) ? rec.centreRaw : '';
+    const leftover = (!mapped && rec.centreRaw) ? rec.centreRaw : '';
+    // A leaving word — wherever it was written — becomes the status.
+    const rawStatus = statusAt >= 0 ? norm(lData[i][statusAt]) : '';
+    rec.status = (isLeftWord_(rawStatus) || isLeftWord_(leftover))
+                   ? STATUS_LEFT
+                   : (rawStatus ? STATUS_ACTIVE : '');
+    rec.centreNote = isLeftWord_(leftover) ? '' : leftover;
     rows.push(rec);
     const k = n.toLowerCase();
     (byName[k] = byName[k] || []).push(rec);
@@ -618,6 +669,7 @@ function buildLegacyRoster_() {
     if (rec.phone  && !target.phone)    sets.push({ col: ePhone + 1, val: rec.phone, what: 'phone' });
     if (rec.phone  && !target.phone && eWa >= 0) sets.push({ col: eWa + 1, val: rec.phone, what: 'whatsapp' });
     if (rec.centre && !target.location) sets.push({ col: eLoc + 1, val: rec.centre, what: 'centre' });
+    if (rec.status && !target.status)    sets.push({ col: eStatus + 1, val: rec.status, what: 'status' });
 
     if (sets.length) toUpdate.push({ rec: rec, sheetRow: target.sheetRow, sets: sets });
     else already.push(rec);
@@ -631,6 +683,7 @@ function buildLegacyRoster_() {
     phoneHeader:  phoneAt  >= 0 ? lHead[phoneAt]  : null,
     centreHeader: centreAt >= 0 ? lHead[centreAt] : null,
     total: rows.length,
+    leftCount: rows.filter(function (x) { return x.status === STATUS_LEFT; }).length,
     toAdd: toAdd, toUpdate: toUpdate, already: already,
     blocked: blocked, ambiguous: ambiguous,
     dupes: dupes, byName: byName, eHead: eHead
@@ -646,7 +699,8 @@ function previewLegacyStudents() {
   out += 'Name column   : "' + r.nameHeader + '"\n';
   out += 'Phone column  : ' + (r.phoneHeader  ? '"' + r.phoneHeader  + '"' : 'NONE FOUND') + '\n';
   out += 'Centre column : ' + (r.centreHeader ? '"' + r.centreHeader + '"' : 'NONE FOUND') + '\n';
-  out += 'Names listed  : ' + r.total + '\n\n';
+  out += 'Names listed  : ' + r.total + '\n';
+  out += 'Marked as left: ' + r.leftCount + '\n\n';
 
   out += 'New rows to add                  : ' + r.toAdd.length + '\n';
   out += 'Existing rows to fill in         : ' + r.toUpdate.length + '\n';
@@ -744,6 +798,7 @@ function importLegacyStudents() {
       row[idx('Location')]     = rec.centre;
       row[idx('Notes')]        = 'Legacy roster - imported from Legacy Students tab' +
                                  (rec.centreNote ? ' | Center column said: ' + rec.centreNote : '');
+      row[idx('Status')]       = rec.status || STATUS_ACTIVE;
       return row;
     });
     sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, head.length).setValues(rows);
