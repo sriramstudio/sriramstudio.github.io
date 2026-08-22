@@ -203,5 +203,34 @@ var at2 = w.sandbox.ensureStatusColumn_();
 check('  ...and is idempotent', at2 === at1 && enr._data[0].length === before + 1,
       [at1, at2, enr._data[0].length]);
 
+console.log('\n--- legacy roster: two students, one name ---');
+w = freshWorld('1234');
+// One 'Krisha Agarwal' already enrolled, with no phone on record.
+call(w, { action: 'addEnrollment', pin: '1234',
+          data: enc({ mode: 'legacy', studentName: 'Krisha Agarwal' }) });
+// The roster lists two of them, told apart by phone.
+w.sheets['Legacy Students'] = makeSheet([
+  ['Student Name', 'Contact', 'Center'],
+  ['Krisha Agarwal', '9111111111', 'Salt Lake'],
+  ['Krisha Agarwal', '9222222222', 'Bhawanipur'],
+  ['Solo Student',   '',           'discontinue']
+]);
+var roster = w.sandbox.buildLegacyRoster_();
+var krishaAdds = roster.toAdd.filter(function (x) { return x.name === 'Krisha Agarwal'; }).length;
+var krishaUpds = roster.toUpdate.filter(function (u) { return u.rec.name === 'Krisha Agarwal'; }).length;
+check('both Krishas are accounted for', krishaAdds + krishaUpds === 2,
+      { add: krishaAdds, update: krishaUpds });
+check('  ...one fills the blank row, one is added new',
+      roster.toUpdate.length === 1 && roster.toAdd.filter(function (x) {
+        return x.name === 'Krisha Agarwal'; }).length === 1,
+      { add: roster.toAdd.map(function (x) { return x.name; }),
+        update: roster.toUpdate.length });
+check('  ...and neither is silently dropped',
+      roster.blocked.length === 0 && roster.ambiguous.length === 0,
+      { blocked: roster.blocked.length, ambiguous: roster.ambiguous.length });
+var solo = roster.toAdd.filter(function (x) { return x.name === 'Solo Student'; })[0];
+check('a leaving word in Center becomes the status, not a branch',
+      solo && solo.status === 'Left' && !solo.centre, solo);
+
 console.log('\n' + (fail === 0 ? 'ALL ' + pass + ' CHECKS PASSED' : pass + ' passed, ' + fail + ' FAILED'));
 process.exit(fail === 0 ? 0 : 1);

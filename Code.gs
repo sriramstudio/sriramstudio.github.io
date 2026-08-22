@@ -644,25 +644,30 @@ function buildLegacyRoster_() {
     }
 
     // Pick which existing row this refers to.
+    // An existing row can only stand for one roster row. Without this, two
+    // students sharing a name both target the same blank-phone row: the first
+    // fills it in, the second overwrites it, and one real student is lost.
     let target = null;
     if (rec.digits) {
       const exact = matches.filter(function (m) { return m.digits === rec.digits; });
       if (exact.length) target = exact[0];
       else {
-        const blank = matches.filter(function (m) { return !m.digits; });
-        // A blank-phone row is the one we imported earlier; fill it in.
-        // Otherwise this is a genuinely different student sharing a name.
+        const blank = matches.filter(function (m) { return !m.digits && !m.claimed; });
+        // A blank-phone row is one we imported earlier; fill it in. Otherwise
+        // this is a genuinely different student who happens to share a name.
         if (blank.length) target = blank[0];
         else { toAdd.push(rec); return; }
       }
     } else {
-      if (matches.length > 1) { ambiguous.push(rec); return; }
-      // The roster says there are several students with this name, but fewer
-      // exist in Enrollments and there is no phone to say which row is which.
-      // Treating these as "already there" would silently drop a real student.
-      if (twins.length > matches.length) { blocked.push(rec); return; }
-      target = matches[0];
+      const free = matches.filter(function (m) { return !m.claimed; });
+      if (free.length > 1) { ambiguous.push(rec); return; }
+      // The roster says several students share this name but fewer exist in
+      // Enrollments, and there is no phone to say which row is which.
+      // Treating the extras as "already there" would drop a real student.
+      if (!free.length || twins.length > matches.length) { blocked.push(rec); return; }
+      target = free[0];
     }
+    target.claimed = true;
 
     // Fill blanks only — never overwrite what is already recorded.
     const sets = [];
