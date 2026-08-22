@@ -492,6 +492,20 @@ function setPin(current, newPin) {
 // Editor-only — deliberately not routed through doGet.
 // previewLegacyStudents() writes NOTHING. Run it first.
 
+// The Center column is also used for status words ("discontinue"), so a
+// value only becomes a Location if it actually names one of the branches.
+const KNOWN_CENTRES = ['Bhawanipur', 'Wood Street', 'Kankurgachi', 'Salt Lake'];
+
+function matchCentre_(v) {
+  const t = (v || '').toString().trim().toLowerCase();
+  if (!t) return null;
+  for (let i = 0; i < KNOWN_CENTRES.length; i++) {
+    const c = KNOWN_CENTRES[i].toLowerCase();
+    if (t.indexOf(c) >= 0 || c.indexOf(t) >= 0) return KNOWN_CENTRES[i];
+  }
+  return null;
+}
+
 function findColumn_(headers, candidates) {
   for (let c = 0; c < candidates.length; c++) {
     for (let i = 0; i < headers.length; i++) {
@@ -553,7 +567,11 @@ function buildLegacyRoster_() {
       phone:  phoneAt  >= 0 ? norm(lData[i][phoneAt])  : '',
       centre: centreAt >= 0 ? norm(lData[i][centreAt]) : ''
     };
-    rec.digits = digits(rec.phone);
+    rec.digits    = digits(rec.phone);
+    rec.centreRaw = rec.centre;
+    const mapped  = matchCentre_(rec.centre);
+    rec.centre    = mapped || '';                        // only real branches
+    rec.centreNote = (!mapped && rec.centreRaw) ? rec.centreRaw : '';
     rows.push(rec);
     const k = n.toLowerCase();
     (byName[k] = byName[k] || []).push(rec);
@@ -588,6 +606,10 @@ function buildLegacyRoster_() {
       }
     } else {
       if (matches.length > 1) { ambiguous.push(rec); return; }
+      // The roster says there are several students with this name, but fewer
+      // exist in Enrollments and there is no phone to say which row is which.
+      // Treating these as "already there" would silently drop a real student.
+      if (twins.length > matches.length) { blocked.push(rec); return; }
       target = matches[0];
     }
 
@@ -633,8 +655,9 @@ function previewLegacyStudents() {
   out += 'Ambiguous - name enrolled twice  : ' + r.ambiguous.length + '\n\n';
 
   if (r.blocked.length) {
-    out += 'NOT IMPORTED - same name as another roster row and no phone to\n';
-    out += 'tell them apart. Add a phone on these rows, then run again:\n';
+    out += 'NOT IMPORTED - this name appears more than once in your roster and\n';
+    out += 'there is no phone to tell those students apart. Add a phone on these\n';
+    out += 'rows, then run again:\n';
     r.blocked.forEach(function (x) { out += '  row ' + x.row + '  ' + x.name + '\n'; });
     out += '\n';
   }
@@ -651,6 +674,16 @@ function previewLegacyStudents() {
              u.sets.map(function (x) { return x.what + '=' + x.val; }).join(', ') + '\n';
     });
     if (r.toUpdate.length > 15) out += '  ... ' + (r.toUpdate.length - 15) + ' more ...\n';
+    out += '\n';
+  }
+
+  const oddCentres = r.toAdd.concat(r.already).filter(function (x) { return !!x.centreNote; });
+  if (oddCentres.length) {
+    out += 'CENTER COLUMN VALUES THAT ARE NOT A BRANCH (' + oddCentres.length + '):\n';
+    out += 'These will NOT go into Location. They are kept in Notes instead.\n';
+    oddCentres.forEach(function (x) {
+      out += '  row ' + x.row + '  ' + x.name + '  ->  "' + x.centreNote + '"\n';
+    });
     out += '\n';
   }
 
@@ -709,7 +742,8 @@ function importLegacyStudents() {
       row[idx('Phone')]        = rec.phone;
       row[idx('WhatsApp')]     = rec.phone;
       row[idx('Location')]     = rec.centre;
-      row[idx('Notes')]        = 'Legacy roster - imported from Legacy Students tab';
+      row[idx('Notes')]        = 'Legacy roster - imported from Legacy Students tab' +
+                                 (rec.centreNote ? ' | Center column said: ' + rec.centreNote : '');
       return row;
     });
     sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, head.length).setValues(rows);
