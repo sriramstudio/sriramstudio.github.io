@@ -476,151 +476,164 @@ function setPin(current, newPin) {
 }
 
 
-// ─── Legacy name reconciliation (run by hand from the editor) ─
-// The 'Legacy Students' tab is the canonical list of correct names.
-// Receipts predate it and are messy: misspellings, and siblings sometimes
-// recorded together in one row. These report how the two line up.
+// ─── Legacy roster import (run by hand from the editor) ───────
+// The 'Legacy Students' tab is the canonical list of students who joined
+// before the registration form existed. Receipts are NOT used as a source:
+// they contain misspellings and siblings recorded together in one row.
+//
+// Imported rows are marked Type = "Existing Student" (the same label the
+// admin panel's "Existing Student" mode uses) so they never read as new
+// admissions, with the source recorded in Notes.
 //
 // Editor-only — deliberately not routed through doGet.
-// previewNameCleanup() writes NOTHING. Read its log before anything else.
+// previewLegacyStudents() writes NOTHING. Run it first.
 
-function levenshtein_(a, b) {
-  a = a.toLowerCase(); b = b.toLowerCase();
-  if (a === b) return 0;
-  if (!a.length) return b.length;
-  if (!b.length) return a.length;
-  let prev = [];
-  for (let j = 0; j <= b.length; j++) prev[j] = j;
-  for (let i = 1; i <= a.length; i++) {
-    const cur = [i];
-    for (let j = 1; j <= b.length; j++) {
-      cur[j] = Math.min(
-        prev[j] + 1,
-        cur[j - 1] + 1,
-        prev[j - 1] + (a.charAt(i - 1) === b.charAt(j - 1) ? 0 : 1)
-      );
+function findColumn_(headers, candidates) {
+  for (let c = 0; c < candidates.length; c++) {
+    for (let i = 0; i < headers.length; i++) {
+      if (headers[i].toString().toLowerCase().indexOf(candidates[c]) >= 0) return i;
     }
-    prev = cur;
   }
-  return prev[b.length];
+  return -1;
 }
 
-function findNameColumn_(headers) {
-  for (let i = 0; i < headers.length; i++) {
-    const h = headers[i].toString().toLowerCase();
-    if (h.indexOf('name') >= 0) return i;
-  }
-  return 0;   // fall back to the first column
-}
-
-function previewNameCleanup() {
+function buildLegacyRoster_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const legacy = ss.getSheetByName('Legacy Students');
-  if (!legacy) {
+  const tab = ss.getSheetByName('Legacy Students');
+  if (!tab) {
     const names = ss.getSheets().map(function (x) { return x.getName(); }).join(', ');
-    const msg = 'No tab called "Legacy Students". Tabs found: ' + names;
-    Logger.log(msg);
-    return msg;
+    return { error: 'No tab called "Legacy Students". Tabs found: ' + names };
   }
 
-  const lData = legacy.getDataRange().getValues();
-  const rData = getSheet('Receipts').getDataRange().getValues();
-  const norm  = function (v) { return (v === null || v === undefined) ? '' : v.toString().trim(); };
+  const lData = tab.getDataRange().getValues();
+  if (lData.length <= 1) return { error: 'The Legacy Students tab has no data rows.' };
 
-  let out = 'LEGACY STUDENTS TAB\n-------------------\n';
-  out += 'Headers      : ' + lData[0].map(norm).join(' | ') + '\n';
-  out += 'Rows of data : ' + Math.max(0, lData.length - 1) + '\n';
+  const norm   = function (v) { return (v === null || v === undefined) ? '' : v.toString().trim(); };
+  const digits = function (v) { return norm(v).replace(/\D/g, ''); };
 
-  const lName = findNameColumn_(lData[0].map(norm));
-  out += 'Name column  : "' + norm(lData[0][lName]) + '" (column ' + (lName + 1) + ')\n';
+  const lHead  = lData[0].map(norm);
+  const nameAt = findColumn_(lHead, ['student name', 'name']);
+  const phoneAt = findColumn_(lHead, ['phone', 'contact', 'mobile', 'whatsapp']);
+  if (nameAt < 0) return { error: 'No name column found. Headers: ' + lHead.join(' | ') };
 
-  // Canonical names, and any repeats within the list itself.
-  const canon = [], countByName = {};
+  // Existing enrollments, keyed by name + phone digits.
+  const eData  = getSheet('Enrollments').getDataRange().getValues();
+  const eHead  = eData[0].map(norm);
+  const eName  = eHead.indexOf('Student Name');
+  const ePhone = eHead.indexOf('Phone');
+  const existing = new Set(), existingNames = {};
+  for (let i = 1; i < eData.length; i++) {
+    const n = norm(eData[i][eName]);
+    if (!n) continue;
+    existing.add(n.toLowerCase() + '|' + digits(eData[i][ePhone]));
+    existingNames[n.toLowerCase()] = (existingNames[n.toLowerCase()] || 0) + 1;
+  }
+
+  // Read the roster.
+  const rows = [], byName = {};
   for (let i = 1; i < lData.length; i++) {
-    const n = norm(lData[i][lName]);
+    const n = norm(lData[i][nameAt]);
     if (!n) continue;
-    canon.push(n);
+    const p = phoneAt >= 0 ? norm(lData[i][phoneAt]) : '';
+    const rec = { row: i + 1, name: n, phone: p, digits: digits(p) };
+    rows.push(rec);
     const k = n.toLowerCase();
-    countByName[k] = (countByName[k] || 0) + 1;
+    (byName[k] = byName[k] || []).push(rec);
   }
-  const dupes = Object.keys(countByName).filter(function (k) { return countByName[k] > 1; });
-  out += 'Names listed : ' + canon.length + '\n';
-  out += 'Repeated names in your list (these need phone numbers): ' + dupes.length + '\n';
-  dupes.forEach(function (k) {
-    out += '   ' + k + '  x' + countByName[k] + '\n';
+
+  const toAdd = [], already = [], blocked = [];
+  rows.forEach(function (rec) {
+    const k = rec.name.toLowerCase();
+    const sameName = byName[k];
+    // A repeated name with no phone cannot be told apart from its twin,
+    // and importing both would put two identical rows in the database.
+    if (sameName.length > 1 && !rec.digits) { blocked.push(rec); return; }
+    if (existing.has(k + '|' + rec.digits)) { already.push(rec); return; }
+    toAdd.push(rec);
   });
 
-  // Distinct receipt names and how often each appears.
-  const rHead = rData[0].map(norm);
-  const rName = rHead.indexOf('Student Name');
-  const rCount = {};
-  for (let i = 1; i < rData.length; i++) {
-    const n = norm(rData[i][rName]);
-    if (!n) continue;
-    rCount[n] = (rCount[n] || 0) + 1;
-  }
-  const rNames = Object.keys(rCount);
+  const dupes = Object.keys(byName).filter(function (k) { return byName[k].length > 1; });
 
-  out += '\nRECEIPTS TAB\n------------\n';
-  out += 'Receipt rows   : ' + Math.max(0, rData.length - 1) + '\n';
-  out += 'Distinct names : ' + rNames.length + '\n';
+  return {
+    nameHeader: lHead[nameAt],
+    phoneHeader: phoneAt >= 0 ? lHead[phoneAt] : null,
+    headers: lHead,
+    total: rows.length,
+    toAdd: toAdd, already: already, blocked: blocked,
+    dupes: dupes, byName: byName, eHead: eData[0].map(norm)
+  };
+}
 
-  // Classify each receipt name against the canonical list.
-  const canonLower = canon.map(function (n) { return n.toLowerCase(); });
-  const exact = [], close = [], multi = [], none = [];
-  const SEPARATORS = /\s(?:&|and|\+)\s|\s*[\/,]\s*/i;
+function previewLegacyStudents() {
+  const r = buildLegacyRoster_();
+  if (r.error) { Logger.log(r.error); return r.error; }
 
-  rNames.forEach(function (rn) {
-    const low = rn.toLowerCase();
-    if (canonLower.indexOf(low) >= 0) { exact.push(rn); return; }
+  let out = 'LEGACY ROSTER IMPORT - PREVIEW\n==============================\n\n';
+  out += 'Tab headers   : ' + r.headers.join(' | ') + '\n';
+  out += 'Name column   : "' + r.nameHeader + '"\n';
+  out += 'Phone column  : ' + (r.phoneHeader ? '"' + r.phoneHeader + '"' : 'NONE FOUND') + '\n';
+  out += 'Names listed  : ' + r.total + '\n\n';
 
-    // Does this row look like more than one student?
-    const hits = canon.filter(function (c) { return low.indexOf(c.toLowerCase()) >= 0; });
-    if (hits.length > 1 || SEPARATORS.test(rn)) {
-      multi.push({ name: rn, n: rCount[rn], hits: hits });
-      return;
-    }
+  out += 'Will be added as "Existing Student" : ' + r.toAdd.length + '\n';
+  out += 'Already in Enrollments (skipped)    : ' + r.already.length + '\n';
+  out += 'Blocked, needs a phone number       : ' + r.blocked.length + '\n\n';
 
-    // Nearest canonical name by edit distance.
-    let best = null, bestD = 99;
-    canon.forEach(function (c) {
-      const d = levenshtein_(rn, c);
-      if (d < bestD) { bestD = d; best = c; }
+  if (r.dupes.length) {
+    out += 'REPEATED NAMES IN YOUR LIST (' + r.dupes.length + '):\n';
+    r.dupes.forEach(function (k) {
+      r.byName[k].forEach(function (x) {
+        out += '  row ' + x.row + '  ' + x.name + '   ' + (x.phone || '<-- ADD A PHONE NUMBER') + '\n';
+      });
     });
-    const tolerance = Math.max(2, Math.floor(rn.length * 0.25));
-    if (best && bestD <= tolerance) close.push({ from: rn, to: best, d: bestD, n: rCount[rn] });
-    else none.push({ name: rn, n: rCount[rn], nearest: best, d: bestD });
-  });
-
-  out += '\nMATCHING\n--------\n';
-  out += 'Exact match to your list : ' + exact.length + '\n';
-  out += 'Likely typo (fixable)    : ' + close.length + '\n';
-  out += 'Looks like 2+ students   : ' + multi.length + '\n';
-  out += 'No match at all          : ' + none.length + '\n';
-
-  if (close.length) {
-    out += '\nLIKELY TYPOS - proposed corrections:\n';
-    close.sort(function (a, b) { return a.d - b.d; });
-    close.forEach(function (c) {
-      out += '  "' + c.from + '"  ->  "' + c.to + '"   (' + c.n + ' receipt(s), ' + c.d + ' char diff)\n';
-    });
+    out += '\n';
   }
-  if (multi.length) {
-    out += '\nLOOKS LIKE MORE THAN ONE STUDENT - needs your decision:\n';
-    multi.forEach(function (m) {
-      out += '  "' + m.name + '"   (' + m.n + ' receipt(s))';
-      if (m.hits.length) out += '   matches: ' + m.hits.join(' + ');
-      out += '\n';
-    });
+
+  if (r.blocked.length) {
+    out += 'NOT IMPORTED - same name as another student and no phone to tell\n';
+    out += 'them apart. Add phone numbers on these rows, then run again:\n';
+    r.blocked.forEach(function (x) { out += '  row ' + x.row + '  ' + x.name + '\n'; });
+    out += '\n';
   }
-  if (none.length) {
-    out += '\nNO MATCH - missing from your list, or too different to guess:\n';
-    none.forEach(function (x) {
-      out += '  "' + x.name + '"   (' + x.n + ' receipt(s))   nearest: "' + x.nearest + '" (' + x.d + ' off)\n';
+
+  if (r.toAdd.length) {
+    out += 'TO BE ADDED:\n';
+    r.toAdd.forEach(function (x) {
+      out += '  ' + x.name + '   ' + (x.phone || '(no phone)') + '\n';
     });
   }
 
-  out += '\nNothing was changed. This is a report only.\n';
+  out += '\nNothing was changed. Report only.\n';
   Logger.log(out);
   return out;
+}
+
+// Appends the roster to Enrollments. Safe to re-run: existing rows are skipped.
+function importLegacyStudents() {
+  const r = buildLegacyRoster_();
+  if (r.error) { Logger.log(r.error); return r.error; }
+  if (!r.toAdd.length) { Logger.log('Nothing to add.'); return 'Nothing to add.'; }
+
+  const sheet = getSheet('Enrollments');
+  const head  = r.eHead;
+  const idx   = function (n) { const i = head.indexOf(n); if (i < 0) throw new Error('Missing column: ' + n); return i; };
+  const now   = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd MMM yyyy, hh:mm a');
+  const stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMddHHmmss');
+
+  const rows = r.toAdd.map(function (rec, i) {
+    const row = new Array(head.length).fill('');
+    row[idx('ID')]           = 'SR-LEGACY-' + stamp + '-' + String(i + 1).padStart(3, '0');
+    row[idx('Enrolled At')]  = now;
+    row[idx('Type')]         = 'Existing Student';
+    row[idx('Student Name')] = rec.name;
+    row[idx('Phone')]        = rec.phone;
+    row[idx('WhatsApp')]     = rec.phone;
+    row[idx('Notes')]        = 'Legacy roster - imported from Legacy Students tab';
+    return row;
+  });
+
+  sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, head.length).setValues(rows);
+  const msg = 'Added ' + rows.length + ' legacy students.' +
+              (r.blocked.length ? ' ' + r.blocked.length + ' still blocked - see previewLegacyStudents().' : '');
+  Logger.log(msg);
+  return msg;
 }
