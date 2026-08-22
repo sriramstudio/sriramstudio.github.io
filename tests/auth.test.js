@@ -539,5 +539,33 @@ check('a clubbed sibling is not listed at all',
 check('a student who has left is excluded',
       ub.indexOf('Gone Away') < 0, 'Gone Away wrongly listed');
 
+console.log('');
+console.log('--- suggestions must not merge two real students ---');
+w = freshWorld('1234');
+w.sheets.Enrollments = makeSheet([dh,
+  dRow('SR-1', 'Ananya Jain', ''),
+  dRow('SR-2', 'Anaaya Jain', ''),
+  dRow('SR-3', 'Tashvi Kocahr', ''),
+  dRow('SR-4', 'Riya Sen', ''),
+  dRow('SR-5', 'Diya Sen', '')
+]);
+w.sheets.Receipts = makeSheet([
+  ['Receipt No','Issued At','Student Name','Contact','Amount (₹)','Fee Month',
+   'Fee Year','Payment Mode','UPI Reference','Fee Type','Date Received','Note'],
+  ['SS-1','01 Aug 2026','Anaaya Jain','9','2000','August','2026','Cash','','Monthly Fee','',''],
+  ['SS-2','01 Aug 2026','Tashvi Kochar','9','2000','August','2026','Cash','','Monthly Fee','',''],
+  ['SS-3','01 Aug 2026','Riya & Diya Sen','9','3000','August','2026','Cash','','Monthly Fee','','']
+]);
+var rv = w.sandbox.reviewUnbilledStudents();
+check('refuses to suggest another enrolled student as a typo',
+      rv.indexOf('Probably a spelling difference               : 1') >= 0, 'see log');
+check('  ...and the real transposition is still caught',
+      rv.indexOf('tashvi kochar') >= 0, 'Tashvi suggestion missing');
+check('  ...while Ananya is flagged as too close to call',
+      rv.indexOf('Too close to another student to call         : 1') >= 0, 'see log');
+check('a shared-surname clubbed receipt covers BOTH siblings',
+      rv.indexOf('Riya Sen') < 0 && rv.indexOf('Diya Sen') < 0,
+      'a Sen sibling was wrongly listed as unbilled');
+
 console.log('\n' + (fail === 0 ? 'ALL ' + pass + ' CHECKS PASSED' : pass + ' passed, ' + fail + ' FAILED'));
 process.exit(fail === 0 ? 0 : 1);

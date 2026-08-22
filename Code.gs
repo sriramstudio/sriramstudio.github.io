@@ -1108,6 +1108,20 @@ function backfillJoiningMonth() {
 
 // "ANSHIKA  SHOME" and "Anshika Shome" are the same child. Lowercasing alone
 // misses that — the double space has to go too.
+// A clubbed receipt often shares the surname: "Riya & Diya Sen" names both
+// children, but only "diya sen" appears as a contiguous run. Treat every word
+// of the student's name appearing in the receipt as a match.
+function blobNamesStudent_(blob, key) {
+  if (!blob || !key) return false;
+  if (blob.indexOf(key) >= 0) return true;
+  const parts = key.split(' ').filter(function (p) { return p.length > 1; });
+  if (parts.length < 2) return false;                 // one word is too loose
+  for (let i = 0; i < parts.length; i++) {
+    if (blob.indexOf(parts[i]) < 0) return false;
+  }
+  return true;
+}
+
 function normName_(v) {
   return (v === null || v === undefined) ? ''
     : v.toString().trim().toLowerCase().replace(/\s+/g, ' ');
@@ -1326,7 +1340,7 @@ function analyticsReport() {
     if (!rec || !rec.n) {
       let last = -1, hits = 0;
       for (let b = 0; b < blobs.length; b++) {
-        if (blobs[b].text.indexOf(k) >= 0) {
+        if (blobNamesStudent_(blobs[b].text, k)) {
           hits++;
           if (blobs[b].period > last) last = blobs[b].period;
         }
@@ -1494,6 +1508,14 @@ function reviewUnbilledStudents() {
   }
   const receiptKeys = Object.keys(receiptNames);
 
+  // Every active student, so a "correction" pointing at another child on the
+  // roster can be rejected rather than offered.
+  const rosterNames = {};
+  for (let r = 1; r < eData.length; r++) {
+    const nm = norm(eData[r][eName]);
+    if (nm && !isLeftWord_(norm(eData[r][eStat]))) rosterNames[normName_(nm)] = nm;
+  }
+
   // Active students the receipts cannot account for.
   const unbilled = [];
   for (let r = 1; r < eData.length; r++) {
@@ -1504,31 +1526,41 @@ function reviewUnbilledStudents() {
     if (paid[key]) continue;
     let inBlob = false;
     for (let b = 0; b < blobs.length; b++) {
-      if (blobs[b].indexOf(key) >= 0) { inBlob = true; break; }
+      if (blobNamesStudent_(blobs[b], key)) { inBlob = true; break; }
     }
     if (inBlob) continue;
     unbilled.push({ row: r + 1, name: raw, key: key, phone: norm(eData[r][ePh]) });
   }
 
   // Nearest receipt name for each.
-  const likelyTypo = [], genuine = [];
+  const likelyTypo = [], ambiguous = [], genuine = [];
   unbilled.forEach(function (u) {
-    let best = null, bestD = 99;
+    // Nearest receipt name that is NOT another student on the roster.
+    let best = null, bestD = 99, nearAny = null, nearAnyD = 99;
     for (let i = 0; i < receiptKeys.length; i++) {
-      const d = levenshtein_(u.key, receiptKeys[i]);
-      if (d < bestD) { bestD = d; best = receiptKeys[i]; }
+      const cand = receiptKeys[i];
+      const d = levenshtein_(u.key, cand);
+      if (d < nearAnyD) { nearAnyD = d; nearAny = cand; }
+      if (rosterNames[cand]) continue;      // that receipt belongs to a real student
+      if (d < bestD) { bestD = d; best = cand; }
     }
-    const tolerance = Math.max(2, Math.floor(u.key.length * 0.25));
+    // Tighter than before: on this roster, given names routinely differ by one
+    // or two characters while belonging to different children.
+    const tolerance = Math.min(2, Math.max(1, Math.round(u.key.length * 0.15)));
+
     if (best && bestD <= tolerance) {
       likelyTypo.push({ name: u.name, row: u.row, near: best, d: bestD, n: receiptNames[best] });
+    } else if (nearAny && rosterNames[nearAny] && nearAnyD <= 2) {
+      ambiguous.push({ name: u.name, row: u.row, near: rosterNames[nearAny], d: nearAnyD });
     } else {
-      genuine.push({ name: u.name, row: u.row, phone: u.phone, near: best, d: bestD });
+      genuine.push({ name: u.name, row: u.row, phone: u.phone, near: best || nearAny, d: bestD === 99 ? nearAnyD : bestD });
     }
   });
 
   let out = 'UNBILLED STUDENTS - REVIEW\n==========================\n';
   out += 'Active students the receipts cannot account for : ' + unbilled.length + '\n';
   out += '  Probably a spelling difference               : ' + likelyTypo.length + '\n';
+  out += '  Too close to another student to call         : ' + ambiguous.length + '\n';
   out += '  No close match - genuinely never invoiced    : ' + genuine.length + '\n\n';
 
   if (likelyTypo.length) {
@@ -1538,6 +1570,17 @@ function reviewUnbilledStudents() {
     likelyTypo.forEach(function (x) {
       out += '  row ' + pad_(x.row, 6) + pad_('"' + x.name + '"', 28) +
              ' receipts say "' + x.near + '"  (' + x.d + ' char, ' + x.n + ' receipt(s))\n';
+    });
+    out += '\n';
+  }
+
+  if (ambiguous.length) {
+    out += 'CANNOT TELL - the nearest receipt name is another student on your\n';
+    out += 'roster, so this is either a typo or simply a similar name. Check by\n';
+    out += 'hand; do not merge on my say-so.\n\n';
+    ambiguous.forEach(function (x) {
+      out += '  row ' + pad_(x.row, 6) + pad_('"' + x.name + '"', 28) +
+             ' similar to enrolled student "' + x.near + '" (' + x.d + ' char)\n';
     });
     out += '\n';
   }
