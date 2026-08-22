@@ -476,121 +476,151 @@ function setPin(current, newPin) {
 }
 
 
-// ─── Legacy student import (run by hand from the editor) ──────
-// Students who joined before the registration form existed appear only in
-// the Receipts sheet, so searchStudents — which reads Enrollments — never
-// finds them. These rebuild Enrollment rows from the receipt history,
-// carrying the contact number across so same-name students stay distinct.
+// ─── Legacy name reconciliation (run by hand from the editor) ─
+// The 'Legacy Students' tab is the canonical list of correct names.
+// Receipts predate it and are messy: misspellings, and siblings sometimes
+// recorded together in one row. These report how the two line up.
 //
-// NOT routed through doGet: these are editor-only, never reachable on the web.
-// Run previewLegacyImport() first — it writes nothing.
+// Editor-only — deliberately not routed through doGet.
+// previewNameCleanup() writes NOTHING. Read its log before anything else.
 
-function colIndex_(headers, name) {
-  const i = headers.indexOf(name);
-  if (i < 0) throw new Error('Missing column in sheet: ' + name);
-  return i;
+function levenshtein_(a, b) {
+  a = a.toLowerCase(); b = b.toLowerCase();
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  let prev = [];
+  for (let j = 0; j <= b.length; j++) prev[j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) {
+      cur[j] = Math.min(
+        prev[j] + 1,
+        cur[j - 1] + 1,
+        prev[j - 1] + (a.charAt(i - 1) === b.charAt(j - 1) ? 0 : 1)
+      );
+    }
+    prev = cur;
+  }
+  return prev[b.length];
 }
 
-function buildLegacyImport_() {
-  const rData = getSheet('Receipts').getDataRange().getValues();
-  const eData = getSheet('Enrollments').getDataRange().getValues();
-  if (rData.length <= 1) return { toAdd: [], text: 'Receipts sheet is empty.' };
+function findNameColumn_(headers) {
+  for (let i = 0; i < headers.length; i++) {
+    const h = headers[i].toString().toLowerCase();
+    if (h.indexOf('name') >= 0) return i;
+  }
+  return 0;   // fall back to the first column
+}
 
-  const rHead = rData[0], eHead = eData[0];
-  const rName = colIndex_(rHead, 'Student Name');
-  const rCont = colIndex_(rHead, 'Contact');
-  const eName = colIndex_(eHead, 'Student Name');
-  const ePhone = colIndex_(eHead, 'Phone');
-
-  const norm   = v => (v === undefined || v === null) ? '' : v.toString().trim();
-  const digits = v => norm(v).replace(/\D/g, '');
-
-  // Who is already enrolled, keyed by name + phone digits.
-  const existing = new Set();
-  for (let i = 1; i < eData.length; i++) {
-    const n = norm(eData[i][eName]);
-    if (n) existing.add(n.toLowerCase() + '|' + digits(eData[i][ePhone]));
+function previewNameCleanup() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const legacy = ss.getSheetByName('Legacy Students');
+  if (!legacy) {
+    const names = ss.getSheets().map(function (x) { return x.getName(); }).join(', ');
+    const msg = 'No tab called "Legacy Students". Tabs found: ' + names;
+    Logger.log(msg);
+    return msg;
   }
 
-  // Distinct name+contact pairs across the whole receipt history.
-  const seen = {};
+  const lData = legacy.getDataRange().getValues();
+  const rData = getSheet('Receipts').getDataRange().getValues();
+  const norm  = function (v) { return (v === null || v === undefined) ? '' : v.toString().trim(); };
+
+  let out = 'LEGACY STUDENTS TAB\n-------------------\n';
+  out += 'Headers      : ' + lData[0].map(norm).join(' | ') + '\n';
+  out += 'Rows of data : ' + Math.max(0, lData.length - 1) + '\n';
+
+  const lName = findNameColumn_(lData[0].map(norm));
+  out += 'Name column  : "' + norm(lData[0][lName]) + '" (column ' + (lName + 1) + ')\n';
+
+  // Canonical names, and any repeats within the list itself.
+  const canon = [], countByName = {};
+  for (let i = 1; i < lData.length; i++) {
+    const n = norm(lData[i][lName]);
+    if (!n) continue;
+    canon.push(n);
+    const k = n.toLowerCase();
+    countByName[k] = (countByName[k] || 0) + 1;
+  }
+  const dupes = Object.keys(countByName).filter(function (k) { return countByName[k] > 1; });
+  out += 'Names listed : ' + canon.length + '\n';
+  out += 'Repeated names in your list (these need phone numbers): ' + dupes.length + '\n';
+  dupes.forEach(function (k) {
+    out += '   ' + k + '  x' + countByName[k] + '\n';
+  });
+
+  // Distinct receipt names and how often each appears.
+  const rHead = rData[0].map(norm);
+  const rName = rHead.indexOf('Student Name');
+  const rCount = {};
   for (let i = 1; i < rData.length; i++) {
     const n = norm(rData[i][rName]);
     if (!n) continue;
-    const key = n.toLowerCase() + '|' + digits(rData[i][rCont]);
-    if (!seen[key]) seen[key] = { name: n, phone: norm(rData[i][rCont]), digits: digits(rData[i][rCont]), count: 0 };
-    seen[key].count++;
+    rCount[n] = (rCount[n] || 0) + 1;
   }
+  const rNames = Object.keys(rCount);
 
-  const toAdd = [], skipped = [], noPhone = [], byName = {};
-  Object.keys(seen).forEach(k => {
-    const rec = seen[k], ln = rec.name.toLowerCase();
-    (byName[ln] = byName[ln] || []).push(rec);
-    if (existing.has(k)) { skipped.push(rec); return; }
-    if (!rec.digits) noPhone.push(rec);
-    toAdd.push(rec);
-  });
-  const collisions = Object.keys(byName).filter(n => byName[n].length > 1).map(n => byName[n]);
+  out += '\nRECEIPTS TAB\n------------\n';
+  out += 'Receipt rows   : ' + Math.max(0, rData.length - 1) + '\n';
+  out += 'Distinct names : ' + rNames.length + '\n';
 
-  let text = 'LEGACY IMPORT PREVIEW\n---------------------\n';
-  text += 'Distinct name+contact pairs in Receipts : ' + Object.keys(seen).length + '\n';
-  text += 'Already in Enrollments (will skip)      : ' + skipped.length + '\n';
-  text += 'Will be added as "Existing Student"     : ' + toAdd.length + '\n';
-  text += 'Of those, with NO phone number          : ' + noPhone.length + '\n\n';
+  // Classify each receipt name against the canonical list.
+  const canonLower = canon.map(function (n) { return n.toLowerCase(); });
+  const exact = [], close = [], multi = [], none = [];
+  const SEPARATORS = /\s(?:&|and|\+)\s|\s*[\/,]\s*/i;
 
-  if (collisions.length) {
-    text += 'SAME NAME, DIFFERENT CONTACT — check these are really different people:\n';
-    collisions.forEach(g => {
-      text += '  ' + g[0].name + '\n';
-      g.forEach(r => { text += '     ' + (r.phone || '(no phone)') + '  - ' + r.count + ' receipt(s)\n'; });
+  rNames.forEach(function (rn) {
+    const low = rn.toLowerCase();
+    if (canonLower.indexOf(low) >= 0) { exact.push(rn); return; }
+
+    // Does this row look like more than one student?
+    const hits = canon.filter(function (c) { return low.indexOf(c.toLowerCase()) >= 0; });
+    if (hits.length > 1 || SEPARATORS.test(rn)) {
+      multi.push({ name: rn, n: rCount[rn], hits: hits });
+      return;
+    }
+
+    // Nearest canonical name by edit distance.
+    let best = null, bestD = 99;
+    canon.forEach(function (c) {
+      const d = levenshtein_(rn, c);
+      if (d < bestD) { bestD = d; best = c; }
     });
-    text += '\n';
-  } else {
-    text += 'No same-name collisions found.\n\n';
-  }
-
-  if (noPhone.length) {
-    text += 'NO PHONE ON RECEIPT (cannot be told apart if the name repeats):\n';
-    noPhone.forEach(r => { text += '  ' + r.name + '\n'; });
-    text += '\n';
-  }
-
-  text += 'To be added:\n';
-  toAdd.forEach(r => { text += '  ' + r.name + '   ' + (r.phone || '(no phone)') + '\n'; });
-
-  return { toAdd: toAdd, skipped: skipped, collisions: collisions, noPhone: noPhone, text: text, eHead: eHead };
-}
-
-// Read-only. Writes nothing — run this first and read the log.
-function previewLegacyImport() {
-  const r = buildLegacyImport_();
-  Logger.log(r.text);
-  return r.text;
-}
-
-// Appends the rows. Safe to re-run: anything already present is skipped.
-function importLegacyStudents() {
-  const r = buildLegacyImport_();
-  if (!r.toAdd || !r.toAdd.length) { Logger.log('Nothing to add.'); return 'Nothing to add.'; }
-
-  const sheet = getSheet('Enrollments');
-  const head  = r.eHead;
-  const now   = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd MMM yyyy, hh:mm a');
-  const stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMddHHmmss');
-
-  const rows = r.toAdd.map((rec, i) => {
-    const row = new Array(head.length).fill('');
-    row[colIndex_(head, 'ID')]           = 'SR-LEGACY-' + stamp + '-' + String(i + 1).padStart(3, '0');
-    row[colIndex_(head, 'Enrolled At')]  = now;
-    row[colIndex_(head, 'Type')]         = 'Existing Student';
-    row[colIndex_(head, 'Student Name')] = rec.name;
-    row[colIndex_(head, 'Phone')]        = rec.phone;
-    row[colIndex_(head, 'WhatsApp')]     = rec.phone;
-    row[colIndex_(head, 'Notes')]        = 'Imported from receipt history';
-    return row;
+    const tolerance = Math.max(2, Math.floor(rn.length * 0.25));
+    if (best && bestD <= tolerance) close.push({ from: rn, to: best, d: bestD, n: rCount[rn] });
+    else none.push({ name: rn, n: rCount[rn], nearest: best, d: bestD });
   });
 
-  sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, head.length).setValues(rows);
-  Logger.log('Added ' + rows.length + ' legacy students.');
-  return 'Added ' + rows.length + ' legacy students.';
+  out += '\nMATCHING\n--------\n';
+  out += 'Exact match to your list : ' + exact.length + '\n';
+  out += 'Likely typo (fixable)    : ' + close.length + '\n';
+  out += 'Looks like 2+ students   : ' + multi.length + '\n';
+  out += 'No match at all          : ' + none.length + '\n';
+
+  if (close.length) {
+    out += '\nLIKELY TYPOS - proposed corrections:\n';
+    close.sort(function (a, b) { return a.d - b.d; });
+    close.forEach(function (c) {
+      out += '  "' + c.from + '"  ->  "' + c.to + '"   (' + c.n + ' receipt(s), ' + c.d + ' char diff)\n';
+    });
+  }
+  if (multi.length) {
+    out += '\nLOOKS LIKE MORE THAN ONE STUDENT - needs your decision:\n';
+    multi.forEach(function (m) {
+      out += '  "' + m.name + '"   (' + m.n + ' receipt(s))';
+      if (m.hits.length) out += '   matches: ' + m.hits.join(' + ');
+      out += '\n';
+    });
+  }
+  if (none.length) {
+    out += '\nNO MATCH - missing from your list, or too different to guess:\n';
+    none.forEach(function (x) {
+      out += '  "' + x.name + '"   (' + x.n + ' receipt(s))   nearest: "' + x.nearest + '" (' + x.d + ' off)\n';
+    });
+  }
+
+  out += '\nNothing was changed. This is a report only.\n';
+  Logger.log(out);
+  return out;
 }

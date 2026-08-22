@@ -151,9 +151,9 @@ check('  ...and their phones differ',
 
 console.log('\n--- editor-only importer is not reachable over the web ---');
 w = freshWorld('1234');
-r = call(w, { action: 'importLegacyStudents' });
-check('importLegacyStudents with NO pin is refused', r.auth === true, r);
-r = call(w, { action: 'importLegacyStudents', pin: '1234' });
+r = call(w, { action: 'previewNameCleanup' });
+check('previewNameCleanup with NO pin is refused', r.auth === true, r);
+r = call(w, { action: 'previewNameCleanup', pin: '1234' });
 check('  ...and is not a routed action even WITH the pin',
       typeof r.error === 'string' && r.error.indexOf('Unknown action') === 0, r);
 
