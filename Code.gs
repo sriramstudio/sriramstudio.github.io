@@ -346,7 +346,11 @@ function addEnrollment(d) {
     'Program': d.program || '',
     'Location': d.location || '',
     'Batch': d.batch || '',
-    'Joining Date': d.mode === 'legacy' ? (d.approxJoining || '') : (d.startDate || d.workshopDate || ''),
+    // Starting month and year are chosen from dropdowns on every mode now.
+    // The older single-date fields are still honoured for anything that has
+    // not been updated to send them.
+    'Joining Date': (d.startMonth && d.startYear) ? (d.startMonth + ' ' + d.startYear)
+                    : (d.mode === 'legacy' ? (d.approxJoining || '') : (d.startDate || d.workshopDate || '')),
     'Pracheen Kala Kendra': d.pracheen || '',
     'Workshop Name': d.workshopName || '',
     'Workshop Date': d.workshopDate || '',

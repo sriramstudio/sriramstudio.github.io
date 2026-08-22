@@ -488,13 +488,13 @@
               <div class="err-msg">Required</div>
             </div>
             <div class="field-row">
-              <div class="field f-admission-only">
-                <label>Joining Date</label>
-                <input id="f-startDate" class="inp" type="date" />
+              <div class="field">
+                <label>Starting Month <span class="req">*</span></label>
+                <select id="f-startMonth" class="inp"><option>January</option><option>February</option><option>March</option><option>April</option><option>May</option><option>June</option><option>July</option><option>August</option><option>September</option><option>October</option><option>November</option><option>December</option></select>
               </div>
-              <div class="field f-legacy-only" style="display:none">
-                <label>Approx. Joining Month</label>
-                <input id="f-approxJoining" class="inp" type="month" />
+              <div class="field">
+                <label>Starting Year <span class="req">*</span></label>
+                <select id="f-startYear" class="inp"></select>
               </div>
             </div>
           </div>
@@ -815,12 +815,19 @@ window.onload = () => {
 };
 
 function populateYears() {
-  const sel = document.getElementById('r-year');
   const y = new Date().getFullYear();
-  for (let i = y-1; i <= y+1; i++) {
+  fillYears('r-year', y - 1, y + 1, y);
+  // An Existing Student may have joined years ago, so reach further back.
+  fillYears('f-startYear', y - 15, y + 1, y);
+}
+
+function fillYears(id, from, to, selected) {
+  const sel = document.getElementById(id);
+  if (!sel) return;
+  for (let i = to; i >= from; i--) {
     const opt = document.createElement('option');
     opt.value = opt.textContent = i;
-    if (i === y) opt.selected = true;
+    if (i === selected) opt.selected = true;
     sel.appendChild(opt);
   }
 }
@@ -835,8 +842,10 @@ function setCurrentMonthYear() {
     const local = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
     dr.value = local;
   }
-  document.getElementById('f-startDate') && (document.getElementById('f-startDate').value =
-    `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`);
+  const sm = document.getElementById('f-startMonth');
+  if (sm) sm.value = d.toLocaleString('en-US', { month: 'long' });
+  const sy = document.getElementById('f-startYear');
+  if (sy) sy.value = d.getFullYear();
 }
 
 // ═══════════════════════════════════════════════════
@@ -959,16 +968,7 @@ function setMode(mode) {
   document.getElementById('btn-submit-enroll').textContent =
     isWorkshop ? 'Register for Workshop' : isLegacy ? 'Add to Records' : 'Submit Enrollment';
 
-  // Legacy: clear joining date so it doesn't auto-fill with today
-  if (isLegacy) {
-    const sd = document.getElementById('f-startDate');
-    if (sd) sd.value = '';
-  }
-  // Admission: restore today's date
-  if (isAdmission) {
-    const sd = document.getElementById('f-startDate');
-    if (sd) sd.value = new Date().toISOString().split('T')[0];
-  }
+  // Starting month/year applies to every mode now, so nothing to swap here.
 }
 
 function val(id) { return (document.getElementById(id) || {}).value || ''; }
@@ -1007,8 +1007,8 @@ async function submitEnrollment() {
     email:        val('f-email'),
     address:      val('f-address'),
     location:     val('f-location') || val('f-workshopLocation'),
-    startDate:    enrollMode === 'legacy' ? '' : val('f-startDate'),
-    approxJoining: val('f-approxJoining'),
+    startMonth:   val('f-startMonth'),
+    startYear:    val('f-startYear'),
     workshopName: val('f-workshopName'),
     workshopDate: val('f-workshopDate'),
     workshopFee:  val('f-workshopFee'),

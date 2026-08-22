@@ -395,5 +395,28 @@ check('  ...and the row values still under the right headers',
       w.sheets.Enrollments._data[1][21] === 'Active',
       w.sheets.Enrollments._data[1].slice(19));
 
+console.log('');
+console.log('--- starting month and year ---');
+w = freshWorld('1234');
+var jhd = ['ID','Enrolled At','Type','Student Name','Date of Birth','Gender',
+  'Blood Group','School/College','Guardian Name','Relation','Phone','WhatsApp',
+  'Email','Address','Location','Joining Date/Approx Joining Month','Workshop Name',
+  'Workshop Date','Workshop Fee','Heard From','Notes','Status','Left On','Review'];
+w.sheets.Enrollments = makeSheet([jhd]);
+call(w, { action: 'addEnrollment', pin: '1234',
+          data: enc({ mode: 'admission', studentName: 'Start Kid',
+                      startMonth: 'September', startYear: '2026' }) });
+var jr = w.sheets.Enrollments._data[1];
+check('month and year land in the joining column',
+      jr[15] === 'September 2026', jr[15]);
+check('  ...and status still defaults to Active', jr[21] === 'Active', jr[21]);
+
+// Anything still sending the old fields must keep working.
+call(w, { action: 'addEnrollment', pin: '1234',
+          data: enc({ mode: 'legacy', studentName: 'Old Field Kid',
+                      approxJoining: '2024-04' }) });
+jr = w.sheets.Enrollments._data[2];
+check('the older single-date field is still honoured', jr[15] === '2024-04', jr[15]);
+
 console.log('\n' + (fail === 0 ? 'ALL ' + pass + ' CHECKS PASSED' : pass + ' passed, ' + fail + ' FAILED'));
 process.exit(fail === 0 ? 0 : 1);
