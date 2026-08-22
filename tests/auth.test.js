@@ -294,5 +294,72 @@ var eh1 = w.sheets.Enrollments._data[0];
 check('Left On column is created', eh1.indexOf('Left On') >= 0, eh1);
 check('Review column is created', eh1.indexOf('Review') >= 0, eh1);
 
+console.log('');
+console.log('--- column alignment repair ---');
+w = freshWorld('1234');
+// The live sheet's real shape: Program, Batch and Pracheen were deleted, so
+// three unheadered columns sit between Notes and Status.
+var CENTRE = 'Bhawanipur - 53A Girish Mukherjee Road';
+var liveHead = ['ID','Enrolled At','Type','Student Name','Date of Birth','Gender',
+  'Blood Group','School/College','Guardian Name','Relation','Phone','WhatsApp',
+  'Email','Address','Location','Joining Date/Approx Joining Month','Workshop Name',
+  'Workshop Date','Workshop Fee','Heard From','Notes','','','','Status','Left On','Review'];
+function blankRow() { var a = []; for (var i = 0; i < 27; i++) a.push(''); return a; }
+
+// Correctly aligned (written before the columns were deleted).
+var good = blankRow();
+good[0] = 'SR0534405'; good[3] = 'Anisha Binaykia'; good[13] = 'Lansdowne';
+good[14] = CENTRE; good[19] = 'Google Search'; good[20] = 'Wants Odissi';
+
+// Written positionally AFTER the deletion, so values 15-24 overflowed.
+var bad = blankRow();
+bad[0] = 'SR-2026-0625182635913'; bad[3] = 'ANSHIKA SHOME'; bad[13] = 'Behala';
+bad[15] = CENTRE;                  // Location landed in Joining Date
+bad[17] = '2026-07-01';            // Joining Date landed in Workshop Date
+bad[22] = 'Friend / Family Referral';  // Heard From landed past Notes
+bad[23] = 'Please call evenings';      // Notes landed past that
+
+// A legacy row, written by header name and therefore fine.
+var legacy = blankRow();
+legacy[0] = 'SR-LEGACY-1'; legacy[3] = 'Mahika Sen';
+legacy[20] = 'Legacy roster'; legacy[24] = 'Active';
+
+w.sheets.Enrollments = makeSheet([liveHead, good, bad, legacy]);
+var plan = w.sandbox.buildColumnRepair_();
+check('the repair accepts the real header layout', !plan.error, plan.error);
+check('only the shifted row is selected',
+      plan.fixes && plan.fixes.length === 1, plan.fixes && plan.fixes.length);
+check('  ...and it is the right one',
+      plan.fixes && plan.fixes[0].sheetRow === 3, plan.fixes && plan.fixes[0].sheetRow);
+
+var after = plan.fixes[0].after;
+check('Location moves back to O', after[0] === CENTRE, after[0]);
+check('Joining Date moves back to P', after[1] === '2026-07-01', after[1]);
+check('Heard From moves back to T', after[5] === 'Friend / Family Referral', after[5]);
+check('Notes moves back to U', after[6] === 'Please call evenings', after[6]);
+check('the unheadered columns are cleared',
+      after[7] === '' && after[8] === '' && after[9] === '', after.slice(7));
+
+var beforeVals = plan.fixes[0].before.filter(Boolean);
+var kept = beforeVals.filter(function (v) { return after.indexOf(v) >= 0; });
+check('NOTHING IS LOST - every value survives the move',
+      kept.length === beforeVals.length, { before: beforeVals, after: after.filter(Boolean) });
+
+// It must refuse to run against a sheet whose headers are not what it expects.
+var wrong = liveHead.slice(); wrong[14] = 'Something Else';
+w.sheets.Enrollments = makeSheet([wrong, good, bad]);
+var refused = w.sandbox.buildColumnRepair_();
+check('it refuses unexpected headers rather than guessing',
+      !!refused.error, refused.error);
+
+// A renamed header must not silently drop the value on new enrolments.
+w = freshWorld('1234');
+w.sheets.Enrollments = makeSheet([liveHead]);
+call(w, { action: 'addEnrollment', pin: '1234',
+          data: enc({ mode: 'admission', studentName: 'Alias Test', startDate: '2026-09-01' }) });
+var newRow = w.sheets.Enrollments._data[1];
+check('a renamed Joining Date header still receives its value',
+      newRow[15] === '2026-09-01', newRow[15]);
+
 console.log('\n' + (fail === 0 ? 'ALL ' + pass + ' CHECKS PASSED' : pass + ' passed, ' + fail + ' FAILED'));
 process.exit(fail === 0 ? 0 : 1);

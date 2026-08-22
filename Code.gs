@@ -357,7 +357,14 @@ function addEnrollment(d) {
     'Left On': '',
     'Review': review
   };
-  const row = head.map(function (h) { return put.hasOwnProperty(h) ? put[h] : ''; });
+  // Headers get renamed in the sheet — 'Joining Date' is really
+  // 'Joining Date/Approx Joining Month'. Match on prefix so a rename does not
+  // silently drop the value.
+  const row = head.map(function (h) {
+    if (put.hasOwnProperty(h)) return put[h];
+    const alias = Object.keys(put).filter(function (k) { return h.indexOf(k) === 0; })[0];
+    return alias ? put[alias] : '';
+  });
   sheet.appendRow(row);
 
   // Send notifications for self-registered applications only
@@ -1004,4 +1011,148 @@ function auditEnrollmentRow(rowNumber) {
   });
   Logger.log(out);
   return out;
+}
+
+
+// ─── Column alignment repair (editor only) ────────────────────
+// The Program, Batch and Pracheen Kala Kendra columns were deleted from the
+// sheet, but the old addEnrollment wrote its 24 values BY POSITION. Rows
+// written after that deletion overflowed: values 15-24 landed to the right of
+// their headers and spilled into three unheadered columns past Notes.
+//
+// For an affected row the current columns hold:
+//   O=Program(blank)  P=Location  Q=Batch(blank)  R=Joining Date
+//   S=Pracheen(blank) T=Workshop Name  U=Workshop Date  V=Workshop Fee
+//   W=Heard From      X=Notes
+//
+// previewColumnRepair() writes nothing. repairColumnAlignment() snapshots the
+// whole tab to a backup sheet before touching a cell.
+
+// Zero-based: where each of columns O..U should take its value from.
+const REPAIR_PULL = [15, 17, 19, 20, 21, 22, 23];   // -> O,P,Q,R,S,T,U
+const REPAIR_FIRST = 14;                            // column O
+const REPAIR_CLEAR = [21, 22, 23];                  // V,W,X are not real columns
+
+function repairHeadersOk_(head) {
+  const want = ['Location', 'Joining Date', 'Workshop Name', 'Workshop Date',
+                'Workshop Fee', 'Heard From', 'Notes'];
+  for (let i = 0; i < want.length; i++) {
+    const h = (head[REPAIR_FIRST + i] || '').toString();
+    if (h.indexOf(want[i]) !== 0) {
+      return 'Column ' + colLetter_(REPAIR_FIRST + i + 1) + ' should start with "' +
+             want[i] + '" but reads "' + h + '"';
+    }
+  }
+  return null;
+}
+
+function isShiftedRow_(row) {
+  const norm = function (v) { return (v === null || v === undefined) ? '' : v.toString().trim(); };
+  // Nothing should ever sit past Notes in those unheadered columns.
+  for (let i = 0; i < REPAIR_CLEAR.length; i++) {
+    if (norm(row[REPAIR_CLEAR[i]])) return true;
+  }
+  // Or a centre name sitting in the Joining Date column.
+  if (matchCentre_(norm(row[15]))) return true;
+  return false;
+}
+
+function buildColumnRepair_() {
+  const sheet = getSheet('Enrollments');
+  const data  = sheet.getDataRange().getValues();
+  if (data.length <= 1) return { error: 'No data rows.' };
+
+  const norm = function (v) { return (v === null || v === undefined) ? '' : v.toString().trim(); };
+  const head = data[0].map(norm);
+
+  const bad = repairHeadersOk_(head);
+  if (bad) return { error: 'Refusing to touch anything - headers are not what the repair expects.\n' + bad };
+
+  const fixes = [];
+  for (let r = 1; r < data.length; r++) {
+    const row = data[r];
+    if (!isShiftedRow_(row)) continue;
+    const before = [], after = [];
+    for (let i = 0; i < 10; i++) {           // O..X
+      before.push(norm(row[REPAIR_FIRST + i]));
+    }
+    for (let i = 0; i < REPAIR_PULL.length; i++) after.push(norm(row[REPAIR_PULL[i]]));
+    while (after.length < 10) after.push('');
+    fixes.push({ sheetRow: r + 1, name: norm(row[3]), id: norm(row[0]), before: before, after: after });
+  }
+  return { head: head, fixes: fixes, total: data.length - 1 };
+}
+
+function previewColumnRepair() {
+  const r = buildColumnRepair_();
+  if (r.error) { Logger.log(r.error); return r.error; }
+
+  const labels = [];
+  for (let i = 0; i < 10; i++) labels.push(colLetter_(REPAIR_FIRST + i + 1));
+
+  let out = 'COLUMN REPAIR - PREVIEW\n=======================\n';
+  out += 'Data rows        : ' + r.total + '\n';
+  out += 'Rows to realign  : ' + r.fixes.length + '\n';
+  out += 'Rows left as-is  : ' + (r.total - r.fixes.length) + '\n\n';
+
+  if (!r.fixes.length) { out += 'Nothing to do.\n'; Logger.log(out); return out; }
+
+  // Prove nothing is lost: every non-empty value before must appear after.
+  let lost = 0;
+  r.fixes.forEach(function (f) {
+    f.before.forEach(function (v) {
+      if (v && f.after.indexOf(v) < 0) lost++;
+    });
+  });
+  out += 'Non-empty values that would be LOST: ' + lost + '\n';
+  out += (lost === 0 ? 'Every value is preserved, only moved.\n\n'
+                     : '*** STOP - values would be dropped. Do not run the repair. ***\n\n');
+
+  out += 'Columns shown: ' + labels.join(' ') + '\n\n';
+  r.fixes.slice(0, 6).forEach(function (f) {
+    out += 'row ' + f.sheetRow + '  ' + f.name + '\n';
+    for (let i = 0; i < 10; i++) {
+      const b = f.before[i], a = f.after[i];
+      if (!b && !a) continue;
+      const mark = (b === a) ? '   ' : ' ->';
+      out += '   ' + labels[i] + ' "' + (b.length > 30 ? b.substring(0, 30) + '~' : b) + '"' +
+             mark + ' "' + (a.length > 30 ? a.substring(0, 30) + '~' : a) + '"\n';
+    }
+    out += '\n';
+  });
+  if (r.fixes.length > 6) out += '... and ' + (r.fixes.length - 6) + ' more rows, same transformation.\n';
+
+  out += '\nNothing was changed. Report only.\n';
+  Logger.log(out);
+  return out;
+}
+
+function repairColumnAlignment() {
+  const r = buildColumnRepair_();
+  if (r.error) { Logger.log(r.error); return r.error; }
+  if (!r.fixes.length) { Logger.log('Nothing to repair.'); return 'Nothing to repair.'; }
+
+  // Refuse if the move would drop anything.
+  let lost = 0;
+  r.fixes.forEach(function (f) {
+    f.before.forEach(function (v) { if (v && f.after.indexOf(v) < 0) lost++; });
+  });
+  if (lost) {
+    const msg = 'Refused: ' + lost + ' value(s) would be lost. Run previewColumnRepair().';
+    Logger.log(msg);
+    return msg;
+  }
+
+  const ss    = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = getSheet('Enrollments');
+  const stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HHmm');
+  sheet.copyTo(ss).setName('Enrollments backup ' + stamp);
+
+  r.fixes.forEach(function (f) {
+    sheet.getRange(f.sheetRow, REPAIR_FIRST + 1, 1, 10).setValues([f.after]);
+  });
+
+  const msg = 'Realigned ' + r.fixes.length + ' row(s). Backup saved as "Enrollments backup ' + stamp + '".';
+  Logger.log(msg);
+  return msg;
 }
