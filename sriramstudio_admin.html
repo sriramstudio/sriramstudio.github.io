@@ -1484,6 +1484,10 @@ async function changePin() {
   try {
     const r = await api('setPin', { current: cur, newpin: nw });
     if (r.success) {
+      // Keep the session in step with the new PIN, or every later call
+      // would send the old one and bounce us back to the PIN gate.
+      adminPin = nw;
+      sessionStorage.setItem(SS_PIN, nw);
       toast('PIN updated ✓', 'success');
       ['s-current','s-new','s-confirm'].forEach(id => document.getElementById(id).value = '');
       toggleSettings();
