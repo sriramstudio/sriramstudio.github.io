@@ -1371,6 +1371,7 @@ function renderRecords(searchQ) {
   if (activeFilter === 'receipts') {
     const filtered = allReceipts.filter(r => !q ||
       (r['Student Name']||'').toLowerCase().includes(q) ||
+      (r['Students']||'').toLowerCase().includes(q) ||
       (r['Receipt No']||'').toLowerCase().includes(q) ||
       (r['Contact']||'').includes(q));
     if (filtered.length === 0) { c.innerHTML = emptyHTML('receipts'); return; }
@@ -1446,12 +1447,20 @@ function enrollmentRecordHTML(r) {
     </div>`;
 }
 
+// Receipts written before the Students column, and single-student ones,
+// only have the combined display string to go on.
+function receiptStudents(r) {
+  const raw = (r['Students'] || '').trim();
+  if (raw) return raw.split('|').map(x => x.trim()).filter(Boolean);
+  return [(r['Student Name'] || '—').trim()];
+}
+
 function receiptRecordHTML(r) {
   return `
     <div class="record-card" onclick="toggleRecord(this)">
       <div class="record-card-top">
         <div>
-          <div class="name">${r['Student Name']||'—'}</div>
+          <div class="name">${r['Student Name']||'—'}${receiptStudents(r).length > 1 ? ` <span class="badge legacy">${receiptStudents(r).length} students</span>` : ''}</div>
           <div class="sub">${r['Fee Month']} ${r['Fee Year']} · ${r['Payment Mode']}</div>
         </div>
         <div class="meta">
@@ -1463,13 +1472,15 @@ function receiptRecordHTML(r) {
         ${detailRows([
           ['Receipt No', r['Receipt No']],
           ['Issued', r['Issued At']],
-          ['Student', r['Student Name']],
+          [receiptStudents(r).length > 1 ? 'Students' : 'Student', receiptStudents(r).join(', ')],
           ['Contact', r['Contact']],
+          ['Fee Type', r['Fee Type']],
           ['Fee Period', r['Fee Month'] + ' ' + r['Fee Year']],
+          ['Date Received', r['Date Received']],
           ['Amount', '₹' + parseInt(r['Amount (₹)']).toLocaleString('en-IN')],
           ['Payment Mode', r['Payment Mode']],
           ['UPI Reference', r['UPI Reference']],
-          ['Centre', r['Centre']],
+          ['Note', r['Note']],
         ])}
       </div>
     </div>`;
