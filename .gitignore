@@ -1,0 +1,6 @@
+# clasp OAuth tokens — never commit these
+.clasprc.json
+*.clasprc.json
+
+# Local clasp project pointer (holds the script id); see README section 3
+.clasp.json

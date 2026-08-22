@@ -1,0 +1,6 @@
+# clasp syncs ONLY the Apps Script backend.
+# The HTML files belong to GitHub Pages, not to the script project —
+# without this, clasp push would upload them into Apps Script as well.
+**/**
+!Code.gs
+!appsscript.json
