@@ -1100,3 +1100,241 @@ function backfillJoiningMonth() {
   Logger.log(msg);
   return msg;
 }
+
+
+// ─── Analytics (read-only, editor only) ───────────────────────
+// Runs inside the sheet and reports aggregates only, so no student's personal
+// details need to leave it. Writes nothing.
+
+const MONTH_NAMES = ['January','February','March','April','May','June',
+                     'July','August','September','October','November','December'];
+
+function monthIndex_(name) {
+  const n = (name || '').toString().trim().toLowerCase();
+  for (let i = 0; i < MONTH_NAMES.length; i++) {
+    if (MONTH_NAMES[i].toLowerCase() === n) return i;
+  }
+  return -1;
+}
+
+function headerIndex_(head, prefix) {
+  for (let i = 0; i < head.length; i++) {
+    if (head[i].indexOf(prefix) === 0) return i;
+  }
+  return -1;
+}
+
+function pad_(str, n) {
+  let out = (str === null || str === undefined) ? '' : str.toString();
+  while (out.length < n) out += ' ';
+  return out;
+}
+
+function money_(n) {
+  return 'Rs. ' + Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+function tally_(map, key) {
+  const k = key || '(blank)';
+  map[k] = (map[k] || 0) + 1;
+}
+
+function renderTally_(map, total, limit) {
+  const keys = Object.keys(map).sort(function (a, b) { return map[b] - map[a]; });
+  let out = '';
+  keys.slice(0, limit || 20).forEach(function (k) {
+    const pct = total ? Math.round(map[k] * 1000 / total) / 10 : 0;
+    out += '  ' + pad_(k, 34) + pad_(map[k], 6) + pct + '%\n';
+  });
+  return out;
+}
+
+function analyticsReport() {
+  const norm = function (v) { return (v === null || v === undefined) ? '' : v.toString().trim(); };
+  const eData = getSheet('Enrollments').getDataRange().getValues();
+  const rData = getSheet('Receipts').getDataRange().getValues();
+  const eHead = eData[0].map(norm);
+  const rHead = rData[0].map(norm);
+
+  const eName = eHead.indexOf('Student Name');
+  const eType = eHead.indexOf('Type');
+  const eLoc  = eHead.indexOf('Location');
+  const eStat = eHead.indexOf('Status');
+  const ePh   = eHead.indexOf('Phone');
+  const eDob  = eHead.indexOf('Date of Birth');
+  const eJoin = headerIndex_(eHead, 'Joining Date');
+  const eHeard = eHead.indexOf('Heard From');
+
+  let out = 'SRIRAM STUDIO - ANALYTICS\n=========================\n';
+  out += 'Generated ' + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd MMM yyyy') + '\n\n';
+
+  // ── Roster ──
+  const byType = {}, byCentre = {}, byHeard = {}, byJoin = {};
+  let active = 0, left = 0, noPhone = 0, noCentre = 0, noDob = 0, noJoin = 0;
+  const ages = { 'under 6': 0, '6-9': 0, '10-13': 0, '14-17': 0, '18+': 0 };
+  const activeNames = {};
+  const today = new Date();
+
+  for (let i = 1; i < eData.length; i++) {
+    const row = eData[i];
+    const name = norm(row[eName]);
+    if (!name) continue;
+    const isLeft = isLeftWord_(norm(row[eStat]));
+    if (isLeft) { left++; } else { active++; activeNames[name.toLowerCase()] = name; }
+
+    tally_(byType, norm(row[eType]));
+    const centre = norm(row[eLoc]).split('\u2013')[0].trim();
+    tally_(byCentre, centre || '(not recorded)');
+    if (eHeard >= 0 && norm(row[eHeard])) tally_(byHeard, norm(row[eHeard]));
+    if (eJoin >= 0) { const j = norm(row[eJoin]); if (j) tally_(byJoin, j); else noJoin++; }
+
+    if (!norm(row[ePh])) noPhone++;
+    if (!centre) noCentre++;
+    const dobRaw = row[eDob];
+    if (!norm(dobRaw)) { noDob++; }
+    else {
+      const d = (Object.prototype.toString.call(dobRaw) === '[object Date]') ? dobRaw : new Date(norm(dobRaw));
+      if (!isNaN(d.getTime())) {
+        const age = Math.floor((today - d) / (365.25 * 24 * 3600 * 1000));
+        if (age < 6) ages['under 6']++;
+        else if (age < 10) ages['6-9']++;
+        else if (age < 14) ages['10-13']++;
+        else if (age < 18) ages['14-17']++;
+        else ages['18+']++;
+      }
+    }
+  }
+  const roster = active + left;
+
+  out += 'ROSTER\n------\n';
+  out += '  Total on record                 ' + roster + '\n';
+  out += '  Active                          ' + active + '\n';
+  out += '  Left                            ' + left + '\n\n';
+
+  out += 'BY TYPE\n' + renderTally_(byType, roster) + '\n';
+  out += 'BY CENTRE\n' + renderTally_(byCentre, roster) + '\n';
+
+  out += 'DATA GAPS (of ' + roster + ')\n';
+  out += '  No phone number                 ' + noPhone + '\n';
+  out += '  No centre recorded              ' + noCentre + '\n';
+  out += '  No date of birth                ' + noDob + '\n';
+  out += '  No joining month                ' + noJoin + '\n\n';
+
+  const withDob = roster - noDob;
+  if (withDob > 0) {
+    out += 'AGE (of the ' + withDob + ' with a date of birth)\n';
+    Object.keys(ages).forEach(function (k) {
+      if (ages[k]) out += '  ' + pad_(k, 34) + ages[k] + '\n';
+    });
+    out += '\n';
+  }
+  if (Object.keys(byHeard).length) {
+    out += 'HOW THEY HEARD OF THE STUDIO\n' + renderTally_(byHeard, 0, 10) + '\n';
+  }
+
+  // ── Receipts ──
+  const rNo   = rHead.indexOf('Receipt No');
+  const rName = rHead.indexOf('Student Name');
+  const rStu  = rHead.indexOf('Students');
+  const rAmt  = headerIndex_(rHead, 'Amount');
+  const rMon  = rHead.indexOf('Fee Month');
+  const rYr   = rHead.indexOf('Fee Year');
+  const rType = rHead.indexOf('Fee Type');
+  const rMode = rHead.indexOf('Payment Mode');
+
+  if (rData.length <= 1) {
+    out += 'RECEIPTS\n--------\n  None issued yet.\n';
+    Logger.log(out);
+    return out;
+  }
+
+  const byPeriod = {}, byFeeType = {}, byMode = {};
+  const perStudent = {};
+  let totalAmt = 0, count = 0, clubbed = 0;
+  let latestPeriod = -1;
+
+  for (let i = 1; i < rData.length; i++) {
+    const row = rData[i];
+    if (!norm(row[rNo])) continue;
+    count++;
+    const amt = parseFloat(norm(row[rAmt]).replace(/[^0-9.]/g, '')) || 0;
+    totalAmt += amt;
+
+    const mi = monthIndex_(norm(row[rMon]));
+    const yr = parseInt(norm(row[rYr]), 10);
+    let period = -1;
+    if (mi >= 0 && yr) {
+      period = yr * 12 + mi;
+      const label = MONTH_NAMES[mi].substring(0, 3) + ' ' + yr;
+      if (!byPeriod[label]) byPeriod[label] = { n: 0, amt: 0, key: period };
+      byPeriod[label].n++;
+      byPeriod[label].amt += amt;
+      if (period > latestPeriod) latestPeriod = period;
+    }
+
+    if (rType >= 0) tally_(byFeeType, norm(row[rType]) || '(blank)');
+    if (rMode >= 0) tally_(byMode, norm(row[rMode]) || '(blank)');
+
+    const raw = rStu >= 0 ? norm(row[rStu]) : '';
+    const names = raw ? raw.split('|') : [norm(row[rName])];
+    if (names.length > 1) clubbed++;
+    names.forEach(function (nm) {
+      const key = nm.trim().toLowerCase();
+      if (!key) return;
+      if (!perStudent[key]) perStudent[key] = { name: nm.trim(), n: 0, last: -1 };
+      perStudent[key].n++;
+      if (period > perStudent[key].last) perStudent[key].last = period;
+    });
+  }
+
+  out += 'RECEIPTS\n--------\n';
+  out += '  Receipts issued                 ' + count + '\n';
+  out += '  Total collected                 ' + money_(totalAmt) + '\n';
+  out += '  Average receipt                 ' + money_(count ? totalAmt / count : 0) + '\n';
+  out += '  Covering more than one student  ' + clubbed + '\n\n';
+
+  const periods = Object.keys(byPeriod).sort(function (a, b) { return byPeriod[a].key - byPeriod[b].key; });
+  out += 'BY FEE PERIOD\n';
+  periods.slice(-15).forEach(function (p) {
+    out += '  ' + pad_(p, 12) + pad_(byPeriod[p].n + ' receipts', 16) + money_(byPeriod[p].amt) + '\n';
+  });
+  out += '\n';
+
+  if (Object.keys(byFeeType).length) out += 'BY FEE TYPE\n' + renderTally_(byFeeType, count) + '\n';
+  if (Object.keys(byMode).length)    out += 'BY PAYMENT MODE\n' + renderTally_(byMode, count) + '\n';
+
+  // ── Who is paying ──
+  const billed = [], neverBilled = [], lapsed = [];
+  Object.keys(activeNames).forEach(function (k) {
+    const rec = perStudent[k];
+    if (!rec || !rec.n) { neverBilled.push(activeNames[k]); return; }
+    billed.push(rec);
+    if (latestPeriod >= 0 && rec.last >= 0 && (latestPeriod - rec.last) >= 2) {
+      lapsed.push({ name: rec.name, behind: latestPeriod - rec.last });
+    }
+  });
+
+  out += 'PAYMENT COVERAGE (active students only)\n';
+  out += '  Active students                 ' + active + '\n';
+  out += '  Have at least one receipt       ' + billed.length + '\n';
+  out += '  Never had a receipt             ' + neverBilled.length + '\n';
+  out += '  Last paid 2+ periods ago        ' + lapsed.length + '\n\n';
+
+  if (lapsed.length) {
+    lapsed.sort(function (a, b) { return b.behind - a.behind; });
+    out += 'FURTHEST BEHIND (top 15)\n';
+    lapsed.slice(0, 15).forEach(function (x) {
+      out += '  ' + pad_(x.name, 30) + x.behind + ' periods\n';
+    });
+    out += '\n';
+  }
+  if (neverBilled.length) {
+    out += 'ACTIVE BUT NEVER INVOICED (first 15 of ' + neverBilled.length + ')\n';
+    neverBilled.slice(0, 15).forEach(function (n) { out += '  ' + n + '\n'; });
+    out += '\n';
+  }
+
+  out += 'Report only. Nothing was changed.\n';
+  Logger.log(out);
+  return out;
+}
