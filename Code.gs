@@ -349,8 +349,15 @@ function addEnrollment(d) {
     // Starting month and year are chosen from dropdowns on every mode now.
     // The older single-date fields are still honoured for anything that has
     // not been updated to send them.
+    // The admin panel supplies month and year on every mode. The public form
+    // deliberately does not ask, so an application falls back to the month it
+    // was submitted in — better than blank, and Anjali can correct it.
+    // Existing Students stay blank unless a month is given: their real joining
+    // date predates this system and guessing it would be worse than nothing.
     'Joining Date': (d.startMonth && d.startYear) ? (d.startMonth + ' ' + d.startYear)
-                    : (d.mode === 'legacy' ? (d.approxJoining || '') : (d.startDate || d.workshopDate || '')),
+                    : d.mode === 'legacy' ? (d.approxJoining || '')
+                    : (d.startDate || d.workshopDate ||
+                       Utilities.formatDate(t, Session.getScriptTimeZone(), 'MMMM yyyy')),
     'Pracheen Kala Kendra': d.pracheen || '',
     'Workshop Name': d.workshopName || '',
     'Workshop Date': d.workshopDate || '',

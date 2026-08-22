@@ -77,7 +77,13 @@ function freshWorld(pin) {
       MimeType: { JSON: 'json' },
       createTextOutput: t => ({ _t: t, setMimeType() { return this; }, getContent() { return this._t; } })
     },
-    Utilities: { formatDate: () => '01 Jan 2026, 10:00 AM' },
+    // Honour the format string: code depends on the shape it returns.
+    Utilities: { formatDate: (d, tz, fmt) => (
+      fmt === 'MMMM yyyy'      ? 'January 2026' :
+      fmt === 'dd MMM yyyy'    ? '01 Jan 2026' :
+      fmt === 'yyyyMMddHHmmss' ? '20260101100000' :
+      fmt === 'yyyy-MM-dd HHmm'? '2026-01-01 1000' :
+                                 '01 Jan 2026, 10:00 AM') },
     Session: { getScriptTimeZone: () => 'Asia/Kolkata' },
     MailApp: { sendEmail() {} },
     UrlFetchApp: { fetch() {} },
@@ -417,6 +423,17 @@ call(w, { action: 'addEnrollment', pin: '1234',
                       approxJoining: '2024-04' }) });
 jr = w.sheets.Enrollments._data[2];
 check('the older single-date field is still honoured', jr[15] === '2024-04', jr[15]);
+
+w.sheets.Enrollments = makeSheet([jhd]);
+call(w, { data: enc({ mode: 'app-admission', studentName: 'Public Kid' }),
+          action: 'addEnrollment' });
+jr = w.sheets.Enrollments._data[1];
+check('a public application defaults to the month it was submitted',
+      /^[A-Z][a-z]+ [0-9]{4}$/.test(jr[15]), jr[15]);
+call(w, { action: 'addEnrollment', pin: '1234',
+          data: enc({ mode: 'legacy', studentName: 'No Guess Kid' }) });
+jr = w.sheets.Enrollments._data[2];
+check('an Existing Student is left blank rather than guessed', jr[15] === '', jr[15]);
 
 console.log('\n' + (fail === 0 ? 'ALL ' + pass + ' CHECKS PASSED' : pass + ' passed, ' + fail + ' FAILED'));
 process.exit(fail === 0 ? 0 : 1);
