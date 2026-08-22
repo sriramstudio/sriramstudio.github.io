@@ -18,9 +18,7 @@ Sriram Studio's system has **4 files** working together:
 | `sriramstudio_admin.html` | GitHub Pages (private URL) | You & Anjali | Admin panel — enroll, receipts, records |
 | `Code.gs` | Google Apps Script (inside the Google Sheet) | Runs automatically | The backend / database engine |
 
-**The database** is a Google Sheet with 4 tabs: `Enrollments`, `Receipts`, `Config`,
-and `Legacy Students` (the canonical list of students who joined before the
-registration form existed — see Section 11).
+**The database** is a Google Sheet with 3 tabs: `Enrollments`, `Receipts`, `Config`.
 
 **How data flows:**
 ```
@@ -260,24 +258,6 @@ about which to pick.
 **REVIEW** badge. Check it, then clear the cell. A genuinely new student who
 happens to share a name is never blocked, only flagged.
 
-**Legacy Students tab columns:**
-Student Name · Contact · Center
-
-The canonical list of pre-form students. `Center` has also been used for status
-words like "discontinue"; the import understands that and files it as `Status`
-rather than as a branch. Add a `Status` column if you ever need to record both a
-centre and a status for the same student.
-
-*(Program, Batch, Pracheen columns are legacy — no longer filled by the forms but kept for old records.)*
-
-**Receipts tab columns:**
-Receipt No · Issued At · Student Name · Contact · Amount (₹) · Fee Month · Fee Year · Payment Mode · UPI Reference · Fee Type · Date Received · Note · **Students**
-
-One receipt can cover several students — siblings are usually paid for together
-with a single clubbed amount. `Students` holds the names separately (`A | B`)
-so the data stays queryable; `Student Name` keeps the combined display string
-(`A & B`) that appears on the printed receipt.
-
 **Config tab keys:**
 - `pin` — admin panel PIN (default 1234)
 - `receipt_seq` — next receipt number (change to reset numbering)
@@ -323,19 +303,18 @@ click Run, then read the **Execution log**.
 
 | Function | What it does |
 |----------|--------------|
-| `previewLegacyStudents` | Reports what the roster import would do. Changes no rows (it does create the `Status` column header if missing). |
-| `importLegacyStudents` | Adds students from `Legacy Students` to `Enrollments` as `Existing Student`. Safe to re-run. |
-| `addStatusColumn` | Creates the `Status` column on its own. |
+| `addStatusColumn` | Creates the `Status`, `Left On` and `Review` columns if missing. |
+| `auditEnrollments` | Reports what each column actually holds, and flags values sitting under the wrong header. Writes nothing. |
+| `auditEnrollmentRow` | Dumps single rows header-by-header. Pass a row number, or nothing for a spread. Writes nothing. |
+| `previewColumnRepair` | Shows which rows are misaligned and exactly what would move. Writes nothing. |
+| `repairColumnAlignment` | Realigns them. Backs the tab up first and refuses if any value would be lost. |
+| `dropEmptyOverflowColumns` | Removes unheadered columns past `Notes`, but only once they are empty. |
+| `previewJoiningBackfill` | Shows which enrolments would get a joining month from their enrolment date. Writes nothing. |
+| `backfillJoiningMonth` | Fills those in. Blank cells only; never overwrites. |
 
-The import is an **upsert**: a name already in `Enrollments` is not added again,
-and blank `Phone` / `Location` / `Status` cells are filled from the roster when
-it later gains that detail. Existing values are never overwritten — so you can
-add phone numbers and centres to the roster over time and re-run it.
-
-It **refuses to guess** in two cases, listing them instead: a name repeated in
-the roster with no phone to tell those students apart, and a name already
-enrolled more than once where the roster row has no phone to say which is meant.
-Add a phone number to those rows and run it again.
+Every one of these was written for a specific one-off job and left in place in
+case the same problem recurs. The `preview` half of each pair always writes
+nothing — run it, read the log, and only then run its counterpart.
 
 ---
 
