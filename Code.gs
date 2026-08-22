@@ -1601,13 +1601,29 @@ function reviewUnbilledStudents() {
 
 
 // ─── Duplicate receipts (read-only, editor only) ──────────────
-// A receipt reissued after a correction, or entered twice, inflates revenue.
-// Groups receipts covering the same student(s) for the same fee period and
-// sorts them by how likely they are to be a genuine duplicate.
+// A receipt reissued after a correction, or submitted twice, inflates revenue.
+// Groups receipts covering the same student(s) for the same fee period, then
+// sorts them by what the evidence actually suggests happened.
 //
-// Reports only. A second receipt in a month is often perfectly legitimate —
-// a registration fee alongside monthly fees, or a costume payment — so the
-// classification is a starting point for checking, not a verdict.
+// Reports only. Issued receipts are historical records of money that changed
+// hands, and none of this is certain enough to act on unchecked.
+
+function shortDate_(v) {
+  if (v === null || v === undefined || v === '') return '';
+  const d = (Object.prototype.toString.call(v) === '[object Date]') ? v : new Date(v.toString());
+  if (isNaN(d.getTime())) return v.toString().substring(0, 12);
+  return Utilities.formatDate(d, Session.getScriptTimeZone(), 'dd MMM');
+}
+
+// A note saying "fee for August" on a receipt filed under July means the
+// period was mis-keyed — both payments are real.
+function noteMonth_(note) {
+  const t = (note || '').toString().toLowerCase();
+  for (let i = 0; i < MONTH_NAMES.length; i++) {
+    if (t.indexOf(MONTH_NAMES[i].toLowerCase()) >= 0) return MONTH_NAMES[i];
+  }
+  return '';
+}
 
 function findDuplicateReceipts() {
   const norm = function (v) { return (v === null || v === undefined) ? '' : v.toString().trim(); };
@@ -1631,103 +1647,127 @@ function findDuplicateReceipts() {
     const row = data[r];
     const no  = norm(row[iNo]);
     if (!no) continue;
-
-    // Who the receipt covers, order-insensitive so "A & B" and "B & A" group.
     const rawStu = iStu >= 0 ? norm(row[iStu]) : '';
     const who = (rawStu ? rawStu.split('|') : [norm(row[iName])])
                   .map(normName_).filter(Boolean).sort().join(' + ');
     if (!who) continue;
-
-    const period = (norm(row[iMon]) + ' ' + norm(row[iYr])).trim() || '(no period)';
-    const key = who + ' || ' + period;
+    const month = norm(row[iMon]);
+    const key = who + ' || ' + (month + ' ' + norm(row[iYr])).trim();
     (groups[key] = groups[key] || []).push({
-      row: r + 1,
-      no: no,
-      when: norm(row[iWhen]),
-      who: who,
-      period: period,
+      row: r + 1, no: no, when: shortDate_(row[iWhen]), who: who,
+      period: (month + ' ' + norm(row[iYr])).trim() || '(no period)',
+      month: month,
       amt: parseFloat(norm(row[iAmt]).replace(/[^0-9.]/g, '')) || 0,
       type: norm(row[iType]) || '(blank)',
       mode: norm(row[iMode]),
-      note: norm(row[iNote])
+      note: norm(row[iNote]),
+      seq: parseInt((no.match(/(\d+)\s*$/) || [0, 0])[1], 10)
     });
   }
 
-  const identical = [], revised = [], otherType = [];
-  let overcount = 0;
+  const repeated = [], modeFix = [], spread = [], revised = [], misKeyed = [], otherType = [];
+  let overRepeat = 0, overMode = 0, overSpread = 0, overRevised = 0;
 
   Object.keys(groups).forEach(function (k) {
     const g = groups[k];
     if (g.length < 2) return;
 
-    // Split the group by fee type: a registration fee alongside a monthly fee
-    // is normal, two monthly fees for one month is not.
     const byType = {};
     g.forEach(function (x) { (byType[x.type] = byType[x.type] || []).push(x); });
 
-    let flaggedWithin = false;
+    let flagged = false;
     Object.keys(byType).forEach(function (t) {
       const rows = byType[t];
       if (rows.length < 2) return;
-      flaggedWithin = true;
+      flagged = true;
+
+      // Notes naming different months: the period was mis-keyed, not doubled.
+      const noteMonths = {};
+      rows.forEach(function (x) { const m = noteMonth_(x.note); if (m) noteMonths[m] = true; });
+      if (Object.keys(noteMonths).length > 1) { misKeyed.push(rows); return; }
+
       const amounts = rows.map(function (x) { return x.amt; });
       const allSame = amounts.every(function (a) { return a === amounts[0]; });
-      if (allSame) {
-        identical.push(rows);
-        overcount += amounts[0] * (rows.length - 1);
-      } else {
+      if (!allSame) {
         revised.push(rows);
-        // If one supersedes the others, the smaller ones are the over-count.
-        const max = Math.max.apply(null, amounts);
-        overcount += amounts.reduce(function (a, b) { return a + b; }, 0) - max;
+        overRevised += amounts.reduce(function (a, b) { return a + b; }, 0) - Math.max.apply(null, amounts);
+        return;
+      }
+
+      const extra = amounts[0] * (rows.length - 1);
+      const days  = {}, modes = {};
+      rows.forEach(function (x) { days[x.when] = true; modes[x.mode] = true; });
+      const sameDay = Object.keys(days).length === 1;
+      const seqs = rows.map(function (x) { return x.seq; }).sort(function (a, b) { return a - b; });
+      const consecutive = seqs.every(function (v, i) { return i === 0 || v === seqs[i - 1] + 1; });
+
+      if (sameDay && consecutive && Object.keys(modes).length === 1) {
+        repeated.push(rows); overRepeat += extra;
+      } else if (sameDay && Object.keys(modes).length > 1) {
+        modeFix.push(rows); overMode += extra;
+      } else {
+        spread.push(rows); overSpread += extra;
       }
     });
-    if (!flaggedWithin && Object.keys(byType).length > 1) otherType.push(g);
+    if (!flagged && Object.keys(byType).length > 1) otherType.push(g);
   });
 
-  let out = 'POSSIBLE DUPLICATE RECEIPTS\n===========================\n';
-  out += 'Receipts scanned                     : ' + (data.length - 1) + '\n';
-  out += 'Same student(s), period AND fee type\n';
-  out += '  identical amount                   : ' + identical.length + ' group(s)\n';
-  out += '  differing amounts (a reissue?)     : ' + revised.length + ' group(s)\n';
-  out += 'Same period, different fee type      : ' + otherType.length + ' group(s)\n';
-  out += 'Revenue at stake if all are duplicates: ' + money_(overcount) + '\n\n';
-
-  const show = function (rows) {
-    out += '  ' + rows[0].who + '   [' + rows[0].period + ']\n';
-    rows.forEach(function (x) {
-      out += '     row ' + pad_(x.row, 6) + pad_(x.no, 15) + pad_(x.when, 14) +
-             pad_(money_(x.amt), 14) + pad_(x.type, 17) + x.mode +
-             (x.note ? '  note: ' + x.note : '') + '\n';
-    });
-    out += '\n';
+  const line = function (x) {
+    return '     row ' + pad_(x.row, 6) + pad_(x.no, 15) + pad_(x.when, 8) +
+           pad_(money_(x.amt), 12) + pad_(x.mode, 6) +
+           (x.note ? x.note.substring(0, 40) : '') + '\n';
+  };
+  const show = function (rows, out) {
+    let t = '  ' + rows[0].who + '   [' + rows[0].period + ']\n';
+    rows.forEach(function (x) { t += line(x); });
+    return t + '\n';
   };
 
-  if (identical.length) {
-    out += 'SAME AMOUNT, SAME PERIOD, SAME FEE TYPE\n';
-    out += 'The strongest signal. Keep one, delete the rest.\n\n';
-    identical.slice(0, 30).forEach(show);
-    if (identical.length > 30) out += '... ' + (identical.length - 30) + ' more group(s).\n\n';
-  }
+  let out = 'POSSIBLE DUPLICATE RECEIPTS\n===========================\n';
+  out += 'Receipts scanned : ' + (data.length - 1) + '\n\n';
+  out += pad_('Submitted more than once', 38) + pad_(repeated.length + ' grp', 9) + money_(overRepeat) + '\n';
+  out += pad_('Reissued with a different pay mode', 38) + pad_(modeFix.length + ' grp', 9) + money_(overMode) + '\n';
+  out += pad_('Same amount, different days', 38) + pad_(spread.length + ' grp', 9) + money_(overSpread) + '\n';
+  out += pad_('Differing amounts (a reissue?)', 38) + pad_(revised.length + ' grp', 9) + money_(overRevised) + '\n';
+  out += pad_('Period mis-keyed - NOT duplicates', 38) + pad_(misKeyed.length + ' grp', 9) + 'Rs. 0\n';
+  out += pad_('Different fee type - usually fine', 38) + pad_(otherType.length + ' grp', 9) + 'Rs. 0\n';
+  out += '\nMost likely over-counted: ' + money_(overRepeat + overMode) + '\n';
+  out += 'Needs checking on top of that: ' + money_(overSpread + overRevised) + '\n\n';
 
+  if (repeated.length) {
+    out += 'SUBMITTED MORE THAN ONCE\n';
+    out += 'Same day, same payment mode, consecutive receipt numbers. Almost\n';
+    out += 'certainly the Generate button firing repeatedly. Keep the first.\n\n';
+    repeated.forEach(function (g) { out += show(g); });
+  }
+  if (modeFix.length) {
+    out += 'REISSUED WITH A DIFFERENT PAYMENT MODE\n';
+    out += 'Same day and amount, one Cash and one UPI. Looks like a correction\n';
+    out += 'made by issuing a second receipt. Keep the one with the right mode.\n\n';
+    modeFix.forEach(function (g) { out += show(g); });
+  }
+  if (spread.length) {
+    out += 'SAME AMOUNT, DIFFERENT DAYS\n';
+    out += 'Could be a genuine second payment. Check before deleting.\n\n';
+    spread.forEach(function (g) { out += show(g); });
+  }
   if (revised.length) {
-    out += 'SAME PERIOD AND FEE TYPE, DIFFERENT AMOUNTS\n';
-    out += 'Probably a corrected reissue, or a part payment followed by the\n';
-    out += 'balance. Check before deleting - both may be real.\n\n';
-    revised.slice(0, 30).forEach(show);
-    if (revised.length > 30) out += '... ' + (revised.length - 30) + ' more group(s).\n\n';
+    out += 'DIFFERING AMOUNTS FOR THE SAME PERIOD\n';
+    out += 'A corrected reissue, or a part payment and then the balance.\n\n';
+    revised.forEach(function (g) { out += show(g); });
   }
-
+  if (misKeyed.length) {
+    out += 'PERIOD MIS-KEYED - BOTH PAYMENTS ARE REAL\n';
+    out += 'The notes name different months, so the Fee Month is wrong on one.\n';
+    out += 'Fix the month; do not delete either.\n\n';
+    misKeyed.forEach(function (g) { out += show(g); });
+  }
   if (otherType.length) {
-    out += 'SAME PERIOD, DIFFERENT FEE TYPE (usually legitimate)\n';
-    out += 'Listed for completeness - a registration or costume fee alongside\n';
-    out += 'the monthly fee looks like this and is not a duplicate.\n\n';
-    otherType.slice(0, 15).forEach(show);
-    if (otherType.length > 15) out += '... ' + (otherType.length - 15) + ' more group(s).\n\n';
+    out += 'SAME PERIOD, DIFFERENT FEE TYPE (' + otherType.length + ' group(s), normally legitimate)\n';
+    out += 'Registration or costume fees alongside the monthly fee.\n\n';
   }
 
-  out += 'Report only. Nothing was changed. Issued receipts are historical\n';
-  out += 'records - confirm with Anjali before deleting any row.\n';
+  out += 'Report only. Nothing was changed.\n';
   Logger.log(out);
   return out;
 }

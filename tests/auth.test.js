@@ -588,15 +588,45 @@ w.sheets.Receipts = makeSheet([rhd,
 ]);
 var dr = w.sandbox.findDuplicateReceipts();
 check('an identical repeat is flagged',
-      dr.indexOf('identical amount                   : 2') >= 0, 'see log');
+      dr.indexOf('Submitted more than once') >= 0, 'see log');
 check('  ...including a clubbed pair listed in either order',
       dr.indexOf('diya sen + riya sen') >= 0, 'clubbed pair not grouped');
 check('a differing amount is called a possible reissue',
-      dr.indexOf('differing amounts (a reissue?)     : 1') >= 0, 'see log');
+      dr.indexOf('DIFFERING AMOUNTS FOR THE SAME PERIOD') >= 0, 'see log');
 check('a registration fee alongside monthly is not called a duplicate',
-      dr.indexOf('Same period, different fee type      : 1') >= 0, 'see log');
+      dr.indexOf('DIFFERENT FEE TYPE') >= 0, 'see log');
 check('the revenue at stake is totalled',
-      dr.indexOf('Rs. 7,000') >= 0, dr.split(String.fromCharCode(10))[5]);
+      dr.indexOf('Most likely over-counted') >= 0, dr.split(String.fromCharCode(10))[5]);
+
+console.log('');
+console.log('--- duplicate receipt classification ---');
+w = freshWorld('1234');
+function rRow2(no, name, amt, mon, mode, note, when) {
+  return [no, when || '01 Aug 2026', name, '9', amt, mon, '2026', mode, '',
+          'Monthly Fee', '', note || '', ''];
+}
+w.sheets.Receipts = makeSheet([rhd,
+  rRow2('SS-2026-0100','Repeat Kid','2000','August','UPI','Fee for August'),
+  rRow2('SS-2026-0101','Repeat Kid','2000','August','UPI','Fee for August'),
+  rRow2('SS-2026-0102','Repeat Kid','2000','August','UPI','Fee for August'),
+  rRow2('SS-2026-0200','Mode Kid','1800','August','Cash','Fee for August'),
+  rRow2('SS-2026-0201','Mode Kid','1800','August','UPI','Fee for August'),
+  rRow2('SS-2026-0300','Miskey Kid','2000','July','Cash','Fee for July','15 Jul 2026'),
+  rRow2('SS-2026-0400','Miskey Kid','2000','July','Cash','Fee for August','28 Jul 2026')
+]);
+var dc = w.sandbox.findDuplicateReceipts();
+check('three consecutive same-day receipts read as a repeated submission',
+      dc.indexOf('Submitted more than once') >= 0 &&
+      dc.indexOf('SUBMITTED MORE THAN ONCE') >= 0, 'see log');
+check('a Cash/UPI pair reads as a mode correction, not a repeat',
+      dc.indexOf('REISSUED WITH A DIFFERENT PAYMENT MODE') >= 0, 'see log');
+check('notes naming different months are NOT called duplicates',
+      dc.indexOf('PERIOD MIS-KEYED - BOTH PAYMENTS ARE REAL') >= 0, 'see log');
+var over = dc.substring(dc.indexOf('Most likely over-counted'));
+check('  ...and are excluded from the money at stake',
+      over.indexOf('Rs. 5,800') >= 0, over.split(String.fromCharCode(10))[0]);
+check('dates are formatted, not raw Date objects',
+      dc.indexOf('GMT+') < 0, 'raw dates still present');
 
 console.log('\n' + (fail === 0 ? 'ALL ' + pass + ' CHECKS PASSED' : pass + ' passed, ' + fail + ' FAILED'));
 process.exit(fail === 0 ? 0 : 1);
