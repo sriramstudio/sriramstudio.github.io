@@ -1156,3 +1156,62 @@ function repairColumnAlignment() {
   Logger.log(msg);
   return msg;
 }
+
+
+// ─── Drop the leftover unheadered columns (editor only) ───────
+// After repairColumnAlignment, V/W/X hold nothing and have no headers. They
+// only existed because the old positional write overflowed past Notes.
+//
+// Refuses if they are not genuinely empty — running this before the repair
+// would destroy the Heard From and Notes values still sitting in W and X.
+
+function findOverflowColumns_() {
+  const sheet = getSheet('Enrollments');
+  const data  = sheet.getDataRange().getValues();
+  const norm  = function (v) { return (v === null || v === undefined) ? '' : v.toString().trim(); };
+  const head  = data[0].map(norm);
+
+  const targets = [];
+  for (let c = 0; c < head.length; c++) {
+    if (head[c] !== '') continue;              // only unheadered columns
+    let filled = 0, example = '';
+    for (let r = 1; r < data.length; r++) {
+      const v = norm(data[r][c]);
+      if (v) { filled++; if (!example) example = v; }
+    }
+    targets.push({ index: c, letter: colLetter_(c + 1), filled: filled, example: example });
+  }
+  return { targets: targets, head: head };
+}
+
+function dropEmptyOverflowColumns() {
+  const info = findOverflowColumns_();
+  if (!info.targets.length) {
+    const msg = 'No unheadered columns found. Nothing to drop.';
+    Logger.log(msg); return msg;
+  }
+
+  const occupied = info.targets.filter(function (t) { return t.filled > 0; });
+  if (occupied.length) {
+    let msg = 'REFUSED - these columns still hold data:\n';
+    occupied.forEach(function (t) {
+      msg += '  ' + t.letter + ' : ' + t.filled + ' value(s), e.g. "' + t.example + '"\n';
+    });
+    msg += '\nRun repairColumnAlignment() first - that data is the Heard From and\n';
+    msg += 'Notes values for the misaligned rows. Deleting now would lose them.';
+    Logger.log(msg);
+    return msg;
+  }
+
+  // Delete right to left so earlier indices stay valid.
+  const sheet = getSheet('Enrollments');
+  const letters = info.targets.map(function (t) { return t.letter; });
+  info.targets.slice().sort(function (a, b) { return b.index - a.index; })
+      .forEach(function (t) { sheet.deleteColumn(t.index + 1); });
+
+  const msg = 'Dropped ' + info.targets.length + ' empty unheadered column(s): ' +
+              letters.join(', ') + '. Columns to their right have shifted left; ' +
+              'everything looks columns up by name, so nothing breaks.';
+  Logger.log(msg);
+  return msg;
+}

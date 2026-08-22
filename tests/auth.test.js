@@ -10,6 +10,7 @@ function makeSheet(rows) {
     getDataRange: () => ({ getValues: () => data.map(r => r.slice()) }),
     appendRow: r => data.push(r.slice()),
     deleteRow: i => data.splice(i - 1, 1),
+    deleteColumn: c => data.forEach(row => row.splice(c - 1, 1)),
     getLastRow: () => data.length,
     getLastColumn: () => data.reduce((m, r) => Math.max(m, r.length), 0),
     getRange(r, c, numRows, numCols) {
@@ -360,6 +361,39 @@ call(w, { action: 'addEnrollment', pin: '1234',
 var newRow = w.sheets.Enrollments._data[1];
 check('a renamed Joining Date header still receives its value',
       newRow[15] === '2026-09-01', newRow[15]);
+
+console.log('');
+console.log('--- dropping the leftover unheadered columns ---');
+w = freshWorld('1234');
+var hd = ['ID','Enrolled At','Type','Student Name','Date of Birth','Gender',
+  'Blood Group','School/College','Guardian Name','Relation','Phone','WhatsApp',
+  'Email','Address','Location','Joining Date/Approx Joining Month','Workshop Name',
+  'Workshop Date','Workshop Fee','Heard From','Notes','','','','Status','Left On','Review'];
+function mkRow() { var a = []; for (var i = 0; i < 27; i++) a.push(''); return a; }
+
+// Still holding the misaligned values: must refuse.
+var occupied = mkRow();
+occupied[3] = 'ANSHIKA SHOME'; occupied[22] = 'Friend / Family Referral';
+w.sheets.Enrollments = makeSheet([hd, occupied]);
+var res = w.sandbox.dropEmptyOverflowColumns();
+check('refuses while the columns still hold data', res.indexOf('REFUSED') === 0, res);
+check('  ...and deletes nothing', w.sheets.Enrollments._data[0].length === 27,
+      w.sheets.Enrollments._data[0].length);
+
+// After the repair they are empty: safe to drop.
+var clean = mkRow();
+clean[3] = 'ANSHIKA SHOME'; clean[19] = 'Friend / Family Referral'; clean[24] = 'Active';
+w.sheets.Enrollments = makeSheet([hd, clean]);
+res = w.sandbox.dropEmptyOverflowColumns();
+check('drops them once they are empty', res.indexOf('Dropped 3') === 0, res);
+var h2 = w.sheets.Enrollments._data[0];
+check('  ...leaving 24 columns', h2.length === 24, h2.length);
+check('  ...with Status now next to Notes',
+      h2[20] === 'Notes' && h2[21] === 'Status', h2.slice(19));
+check('  ...and the row values still under the right headers',
+      w.sheets.Enrollments._data[1][19] === 'Friend / Family Referral' &&
+      w.sheets.Enrollments._data[1][21] === 'Active',
+      w.sheets.Enrollments._data[1].slice(19));
 
 console.log('\n' + (fail === 0 ? 'ALL ' + pass + ' CHECKS PASSED' : pass + ' passed, ' + fail + ' FAILED'));
 process.exit(fail === 0 ? 0 : 1);
