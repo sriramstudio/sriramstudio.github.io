@@ -1189,6 +1189,41 @@ function searchStudents(q) {
   }, 150);
 }
 
+// Receipts can cover several students; each pick becomes a removable chip.
+let selectedStudents = [];
+
+function studentKey(name, phone) {
+  return (name || '').toLowerCase() + '|' + (phone || '').replace(/\D/g, '');
+}
+
+function renderStudentChips() {
+  const box = document.getElementById('r-students');
+  if (!selectedStudents.length) { box.innerHTML = ''; box.style.display = 'none'; return; }
+  box.style.display = 'flex';
+  box.innerHTML = selectedStudents.map(function (s, i) {
+    return '<span class="chip">' + s.name +
+           '<button type="button" class="chip-x" data-i="' + i + '" title="Remove">&times;</button></span>';
+  }).join('');
+  box.querySelectorAll('.chip-x').forEach(function (b) {
+    b.addEventListener('click', function () {
+      selectedStudents.splice(parseInt(b.dataset.i), 1);
+      renderStudentChips();
+    });
+  });
+}
+
+function clearSelectedStudents() {
+  selectedStudents = [];
+  renderStudentChips();
+}
+
+function addStudentChip(name, phone, program, location) {
+  const key = studentKey(name, phone);
+  const dup = selectedStudents.some(function (s) { return studentKey(s.name, s.phone) === key; });
+  if (!dup) selectedStudents.push({ name: name, phone: phone || '', program: program || '', location: location || '' });
+  renderStudentChips();
+}
+
 function selectStudent(name, phone, program, location) {
   addStudentChip(name, phone, program, location);
   document.getElementById('r-name').value  = '';
