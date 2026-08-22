@@ -763,10 +763,12 @@ const RECEIPT_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAANwAAADcCAYA
 //  CONFIG & STATE
 // ═══════════════════════════════════════════════════
 const LS_URL = 'sriram_api_url';
-const SS_PIN = 'sriram_pin_ok';
+const SS_PIN = 'sriram_pin';   // the PIN itself — the server verifies it on every call
 
 let apiUrl       = localStorage.getItem(LS_URL) || '';
-let pinVerified  = sessionStorage.getItem(SS_PIN) === 'true';
+let adminPin     = sessionStorage.getItem(SS_PIN) || '';
+let pinVerified  = !!adminPin;
+let pinGateIsBoot = false;
 let enrollMode   = 'admission';
 let payMode      = 'UPI';
 let allEnrollments = [];
@@ -796,9 +798,11 @@ window.onload = () => {
   if (!apiUrl) {
     showScreen('setup');
   } else {
-    showScreen('app');
-    if (!pinVerified && document.getElementById('tab-receipt').classList.contains('active')) {
-      // pin overlay handled on tab click
+    if (!pinVerified) {
+      pinGateIsBoot = true;   // Records and Enroll are PIN-protected now as well
+      showPinGate();
+    } else {
+      showScreen('app');
     }
   }
 };
@@ -831,13 +835,37 @@ function setCurrentMonthYear() {
 // ═══════════════════════════════════════════════════
 //  API
 // ═══════════════════════════════════════════════════
+// The backend serves these without a PIN; everything else needs one attached.
+const PUBLIC_ACTIONS = ['verifyPin'];
+
 async function api(action, params = {}) {
   const u = new URL(apiUrl);
   u.searchParams.set('action', action);
   for (const [k, v] of Object.entries(params)) u.searchParams.set(k, v);
+  if (PUBLIC_ACTIONS.indexOf(action) === -1 && adminPin) u.searchParams.set('pin', adminPin);
   const res = await fetch(u.toString(), { redirect: 'follow' });
   if (!res.ok) throw new Error('HTTP ' + res.status);
-  return res.json();
+  const data = await res.json();
+  if (data && (data.auth || data.locked)) {
+    lockOut(data.error || 'Session expired. Please enter the PIN again.');
+    throw new Error(data.error || 'Unauthorised');
+  }
+  return data;
+}
+
+// Server refused our PIN — forget it and make the user re-enter.
+function lockOut(msg) {
+  adminPin    = '';
+  pinVerified = false;
+  sessionStorage.removeItem(SS_PIN);
+  showPinGate();
+  if (msg) toast(msg, 'error');
+}
+
+// The PIN overlay lives inside the Receipt pane, so gate through that tab.
+function showPinGate() {
+  showScreen('app');
+  switchTab('receipt');
 }
 
 // ═══════════════════════════════════════════════════
@@ -1028,8 +1056,10 @@ async function submitPin() {
   try {
     const r = await api('verifyPin', { pin });
     if (r.valid) {
+      adminPin    = pin;
       pinVerified = true;
-      sessionStorage.setItem(SS_PIN, 'true');
+      sessionStorage.setItem(SS_PIN, pin);
+      if (pinGateIsBoot) { location.reload(); return; }
       document.getElementById('pin-overlay').style.display  = 'none';
       document.getElementById('receipt-form-view').style.display = 'block';
       document.getElementById('pin-error').style.display = 'none';
