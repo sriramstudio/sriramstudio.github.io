@@ -1106,6 +1106,13 @@ function backfillJoiningMonth() {
 // Runs inside the sheet and reports aggregates only, so no student's personal
 // details need to leave it. Writes nothing.
 
+// "ANSHIKA  SHOME" and "Anshika Shome" are the same child. Lowercasing alone
+// misses that — the double space has to go too.
+function normName_(v) {
+  return (v === null || v === undefined) ? ''
+    : v.toString().trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
 const MONTH_NAMES = ['January','February','March','April','May','June',
                      'July','August','September','October','November','December'];
 
@@ -1180,7 +1187,7 @@ function analyticsReport() {
     const name = norm(row[eName]);
     if (!name) continue;
     const isLeft = isLeftWord_(norm(row[eStat]));
-    if (isLeft) { left++; } else { active++; activeNames[name.toLowerCase()] = name; }
+    if (isLeft) { left++; } else { active++; activeNames[normName_(name)] = name; }
 
     tally_(byType, norm(row[eType]));
     const centre = norm(row[eLoc]).split('\u2013')[0].trim();
@@ -1249,7 +1256,7 @@ function analyticsReport() {
   }
 
   const byPeriod = {}, byFeeType = {}, byMode = {};
-  const perStudent = {};
+  const perStudent = {}, blobs = [];
   let totalAmt = 0, count = 0, clubbed = 0;
   let latestPeriod = -1;
 
@@ -1279,12 +1286,18 @@ function analyticsReport() {
     const names = raw ? raw.split('|') : [norm(row[rName])];
     if (names.length > 1) clubbed++;
     names.forEach(function (nm) {
-      const key = nm.trim().toLowerCase();
+      const key = normName_(nm);
       if (!key) return;
       if (!perStudent[key]) perStudent[key] = { name: nm.trim(), n: 0, last: -1 };
       perStudent[key].n++;
       if (period > perStudent[key].last) perStudent[key].last = period;
     });
+
+    // Siblings were merged into one receipt long before the Students column
+    // existed, so "Riya & Diya Sen" matches neither child by name. Keep the
+    // whole string to search through afterwards.
+    const blob = normName_(rStu >= 0 && raw ? raw.replace(/\|/g, ' ') : norm(row[rName]));
+    if (blob) blobs.push({ text: blob, period: period });
   }
 
   out += 'RECEIPTS\n--------\n';
@@ -1305,8 +1318,22 @@ function analyticsReport() {
 
   // ── Who is paying ──
   const billed = [], neverBilled = [], lapsed = [];
+  let viaClub = 0;
   Object.keys(activeNames).forEach(function (k) {
-    const rec = perStudent[k];
+    let rec = perStudent[k];
+
+    // No exact match? The student may be named inside a clubbed receipt.
+    if (!rec || !rec.n) {
+      let last = -1, hits = 0;
+      for (let b = 0; b < blobs.length; b++) {
+        if (blobs[b].text.indexOf(k) >= 0) {
+          hits++;
+          if (blobs[b].period > last) last = blobs[b].period;
+        }
+      }
+      if (hits) { rec = { name: activeNames[k], n: hits, last: last }; viaClub++; }
+    }
+
     if (!rec || !rec.n) { neverBilled.push(activeNames[k]); return; }
     billed.push(rec);
     if (latestPeriod >= 0 && rec.last >= 0 && (latestPeriod - rec.last) >= 2) {
@@ -1317,6 +1344,7 @@ function analyticsReport() {
   out += 'PAYMENT COVERAGE (active students only)\n';
   out += '  Active students                 ' + active + '\n';
   out += '  Have at least one receipt       ' + billed.length + '\n';
+  out += '    of which matched only inside a clubbed receipt  ' + viaClub + '\n';
   out += '  Never had a receipt             ' + neverBilled.length + '\n';
   out += '  Last paid 2+ periods ago        ' + lapsed.length + '\n\n';
 
@@ -1335,6 +1363,78 @@ function analyticsReport() {
   }
 
   out += 'Report only. Nothing was changed.\n';
+  Logger.log(out);
+  return out;
+}
+
+
+// ─── Duplicate students (read-only, editor only) ──────────────
+// The roster import matched on a lowercased name, so "ANSHIKA  SHOME" and
+// "Anshika Shome" were treated as different people and both were kept.
+// Reports only — genuinely different students do share names, so nothing is
+// merged automatically.
+
+function findDuplicateStudents() {
+  const norm  = function (v) { return (v === null || v === undefined) ? '' : v.toString().trim(); };
+  const data  = getSheet('Enrollments').getDataRange().getValues();
+  const head  = data[0].map(norm);
+  const iName = head.indexOf('Student Name');
+  const iId   = head.indexOf('ID');
+  const iType = head.indexOf('Type');
+  const iStat = head.indexOf('Status');
+  const iPh   = head.indexOf('Phone');
+
+  const groups = {};
+  for (let r = 1; r < data.length; r++) {
+    const raw = norm(data[r][iName]);
+    if (!raw) continue;
+    const key = normName_(raw);
+    (groups[key] = groups[key] || []).push({
+      row: r + 1, raw: raw,
+      id: norm(data[r][iId]), type: norm(data[r][iType]),
+      status: norm(data[r][iStat]) || 'Active',
+      phone: norm(data[r][iPh]).replace(/\D/g, '')
+    });
+  }
+
+  const likely = [], sameNameDifferentPeople = [];
+  Object.keys(groups).forEach(function (k) {
+    const g = groups[k];
+    if (g.length < 2) return;
+    // Spelled differently but the same name, or the same contact: one person.
+    const spellings = {};
+    g.forEach(function (x) { spellings[x.raw] = true; });
+    const phones = g.map(function (x) { return x.phone; });
+    const distinctPhones = phones.filter(function (p, i) { return p && phones.indexOf(p) === i; });
+    if (Object.keys(spellings).length > 1 || distinctPhones.length <= 1) likely.push(g);
+    else sameNameDifferentPeople.push(g);
+  });
+
+  let out = 'DUPLICATE STUDENTS\n==================\n';
+  out += 'Rows scanned : ' + (data.length - 1) + '\n';
+  out += 'Likely duplicates      : ' + likely.length + ' name(s)\n';
+  out += 'Same name, different people : ' + sameNameDifferentPeople.length + ' name(s)\n\n';
+
+  const show = function (g) {
+    g.forEach(function (x) {
+      out += '   row ' + pad_(x.row, 6) + pad_('"' + x.raw + '"', 28) +
+             pad_(x.type, 24) + pad_(x.status, 9) + (x.phone || '(no phone)') + '\n';
+    });
+    out += '\n';
+  };
+
+  if (likely.length) {
+    out += 'LIKELY THE SAME CHILD - different spelling, or one contact number:\n\n';
+    likely.slice(0, 25).forEach(show);
+    if (likely.length > 25) out += '... ' + (likely.length - 25) + ' more.\n\n';
+  }
+  if (sameNameDifferentPeople.length) {
+    out += 'SAME NAME BUT DIFFERENT PHONES - probably genuinely two students:\n\n';
+    sameNameDifferentPeople.slice(0, 15).forEach(show);
+  }
+
+  out += 'Report only. Nothing was changed. Merge by hand: keep the row with the\n';
+  out += 'fuller record, move anything useful across, then delete the other.\n';
   Logger.log(out);
   return out;
 }

@@ -467,5 +467,50 @@ r = call(w, { action: 'listStudents', pin: '1234' });
 var dupes = (r.students || []).filter(function (x) { return x.studentName === 'Test Child'; });
 check('an identical name and phone is listed once', dupes.length === 1, dupes.length);
 
+console.log('');
+console.log('--- duplicate detection and clubbed-receipt coverage ---');
+w = freshWorld('1234');
+check('normName_ collapses case and stray spaces',
+      w.sandbox.normName_('ANSHIKA  SHOME') === w.sandbox.normName_('Anshika Shome'),
+      [w.sandbox.normName_('ANSHIKA  SHOME'), w.sandbox.normName_('Anshika Shome')]);
+
+var dh = ['ID','Enrolled At','Type','Student Name','Date of Birth','Gender',
+  'Blood Group','School/College','Guardian Name','Relation','Phone','WhatsApp',
+  'Email','Address','Location','Joining Date','Workshop Name','Workshop Date',
+  'Workshop Fee','Heard From','Notes','Status','Left On','Review'];
+function dRow(id, name, phone, status) {
+  var a = []; for (var i = 0; i < 24; i++) a.push('');
+  a[0] = id; a[2] = 'Existing Student'; a[3] = name; a[10] = phone || '';
+  a[21] = status || 'Active'; return a;
+}
+w.sheets.Enrollments = makeSheet([dh,
+  dRow('SR-1', 'ANSHIKA  SHOME', ''),
+  dRow('SR-2', 'Anshika Shome', ''),
+  dRow('SR-3', 'Krisha Agarwal', '9111111111'),
+  dRow('SR-4', 'Krisha Agarwal', '9222222222'),
+  dRow('SR-5', 'Diya Sen', '')
+]);
+var dup = w.sandbox.findDuplicateStudents();
+check('the two Anshika spellings are flagged as one child',
+      dup.indexOf('Likely duplicates      : 1') >= 0, dup.split('\n')[3]);
+check('the two Krishas are kept apart as real students',
+      dup.indexOf('Same name, different people : 1') >= 0, dup.split('\n')[4]);
+
+// A sibling named only inside a clubbed receipt must not read as unpaid.
+w.sheets.Receipts = makeSheet([
+  ['Receipt No','Issued At','Student Name','Contact','Amount (\u20b9)','Fee Month',
+   'Fee Year','Payment Mode','UPI Reference','Fee Type','Date Received','Note'],
+  ['SS-2026-0001','01 Aug 2026','Riya Sen & Diya Sen','9999','3000','August',
+   '2026','Cash','','Monthly Fee','','']
+]);
+var rep = w.sandbox.analyticsReport();
+check('a sibling inside a clubbed receipt counts as paid',
+      rep.indexOf('clubbed receipt  1') >= 0,
+      rep.split('\n').filter(function (l) { return l.indexOf('clubbed receipt') >= 0; }));
+check('  ...and is not listed as never invoiced',
+      rep.indexOf('Diya Sen') < rep.indexOf('ACTIVE BUT NEVER INVOICED') ||
+      rep.indexOf('ACTIVE BUT NEVER INVOICED') < 0,
+      rep.indexOf('ACTIVE BUT NEVER INVOICED'));
+
 console.log('\n' + (fail === 0 ? 'ALL ' + pass + ' CHECKS PASSED' : pass + ' passed, ' + fail + ' FAILED'));
 process.exit(fail === 0 ? 0 : 1);
