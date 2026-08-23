@@ -903,6 +903,7 @@ function switchTab(name) {
       document.getElementById('pin-overlay').style.display = 'flex';
       document.getElementById('receipt-form-view').style.display = 'none';
       document.getElementById('receipt-preview-view').style.display = 'none';
+      showingReceipt(false);
       setTimeout(() => document.getElementById('p0').focus(), 100);
     } else {
       document.getElementById('pin-overlay').style.display = 'none';
@@ -910,6 +911,11 @@ function switchTab(name) {
     }
   }
   if (name === 'records') loadRecordsTab();
+
+  // The tab title is what a saved PDF gets named, so keep it matched to what
+  // is actually on screen — Receipt only while a receipt is showing.
+  showingReceipt(name === 'receipt' &&
+    document.getElementById('receipt-preview-view').style.display === 'block');
 }
 
 // ═══════════════════════════════════════════════════
@@ -1285,6 +1291,7 @@ async function generateReceipt() {
     renderReceipt(data);
     document.getElementById('receipt-form-view').style.display    = 'none';
     document.getElementById('receipt-preview-view').style.display = 'block';
+    showingReceipt(true);
     // mirror to print target
     document.getElementById('print-target').innerHTML = document.getElementById('receipt-output').innerHTML;
     if (!r.duplicate) toast('Receipt saved ✓', 'success');
@@ -1356,6 +1363,7 @@ function renderReceipt(d) {
 }
 
 function showReceiptForm() {
+  showingReceipt(false);
   document.getElementById('receipt-preview-view').style.display = 'none';
   document.getElementById('receipt-form-view').style.display    = 'block';
   document.getElementById('r-name').value   = '';
@@ -1371,25 +1379,26 @@ function showReceiptForm() {
   setCurrentMonthYear(); // also resets r-daterecv to today
 }
 
-// Chrome and Edge name a saved PDF after document.title, so printing from the
-// panel produced "Sriram Studio — Admin.pdf". Swap the title for the duration
-// of the print and put it back afterwards.
+// A saved PDF is named after document.title, so receipts printed from the
+// panel came out as "Sriram Studio — Admin.pdf".
+//
+// The title follows what is on screen rather than being swapped around the
+// print call. Anjali saves these on an iPhone, where reaching "Save to Files"
+// means tapping through the share sheet — that can take a while, `afterprint`
+// is unreliable on iOS Safari, and any timeout long enough to be safe would be
+// a guess. While the receipt is showing, the title says Receipt. Nothing races.
+// The panel's own title is captured on first use rather than in a top-level
+// const: the PIN gate calls this through switchTab() while the page is still
+// loading, which is earlier than any const declared down here would have run.
+// A `const` there throws before it is initialised, and that aborts the whole
+// script — the panel loads to a dead page.
+function showingReceipt(on) {
+  if (!showingReceipt.panelTitle) showingReceipt.panelTitle = document.title;
+  document.title = on ? 'Sriram Studio - Receipt' : showingReceipt.panelTitle;
+}
+
 function printReceipt() {
-  const original = document.title;
-  let restored = false;
-  const restore = function () {
-    if (restored) return;
-    restored = true;
-    document.title = original;
-    window.removeEventListener('afterprint', restore);
-  };
-
-  document.title = 'Sriram Studio - Receipt';
-  window.addEventListener('afterprint', restore);
-  // afterprint does not fire on every browser. The filename is fixed when the
-  // dialog opens, so restoring a few seconds later is safe either way.
-  setTimeout(restore, 5000);
-
+  showingReceipt(true);   // the preview is already up; make certain regardless
   window.print();
 }
 
