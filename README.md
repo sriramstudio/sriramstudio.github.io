@@ -197,24 +197,41 @@ student database. Ten wrong attempts locks the endpoint for 15 minutes.
 
 ## 7. How to Update `Code.gs` (the backend)
 
-### The quick way — clasp (from the project folder)
+### The quick way — `deploy.cmd` (from the project folder)
 
-The project folder is a git repository wired to GitHub, and `clasp` pushes
-`Code.gs` straight to Apps Script. Two commands:
+Open PowerShell in the project folder and run one of:
 
 ```
-clasp push
-clasp redeploy AKfycbzRB6XQrT8lx2lgcgv9nPQ18akiRCU8x58ritJIgbjNRkKxE3FZAifMREpZ4f7ZgSWD -d "what changed"
+.\deploy.cmd
+.\deploy.cmd "what changed"
 ```
 
-Redeploying to that **existing** deployment id creates a new version at the
-**same URL**, so no HTML needs touching. Never use `clasp deploy` — that makes
-a *new* deployment with a *new* URL and breaks `register.html`.
+- **No description** → pushes `Code.gs` only. This is all you need for anything
+  run from the Apps Script editor or the **Analytics** menu, because the editor
+  always runs the code you just pushed.
+- **With a description** → pushes, then redeploys the live web app. Use this
+  when the admin panel or the public form needs the change.
 
-`.claspignore` restricts the push to `Code.gs` and `appsscript.json`, so the
-GitHub Pages HTML is never uploaded into the script project.
+It **runs the tests first and refuses to push if any fail**, so a broken
+`Code.gs` cannot reach the sheet. It redeploys to the **existing** deployment
+id, which keeps the URL, so no HTML needs touching.
 
-To roll back: `clasp redeploy <same-id> -V <older version number>`
+To roll back: `clasp.cmd redeploy <same-id> -V <older version number>`
+
+> **Why `.cmd` and not the bare `clasp`?** PowerShell's execution policy blocks
+> npm's `clasp.ps1` shim — you get *"running scripts is disabled on this
+> system"*. `clasp.cmd` is the very same program and is not blocked, so nothing
+> needs loosening. The same applies to `npm.cmd`. Also, PowerShell 5.1 has no
+> `&&`, so run commands one at a time.
+>
+> If `clasp.cmd` itself is not found, install it:
+> `npm.cmd install -g @google/clasp`, then `clasp.cmd login`.
+
+`.claspignore` restricts the push to `Code.gs` and `appsscript.json`, so neither
+the GitHub Pages HTML nor `deploy.cmd` is ever uploaded into the script project.
+
+Never use `clasp deploy` — that makes a *new* deployment with a *new* URL and
+breaks `register.html`. `deploy.cmd` only ever uses `clasp redeploy`.
 
 ### The manual way (if clasp is unavailable)
 

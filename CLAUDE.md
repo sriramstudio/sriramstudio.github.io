@@ -32,19 +32,42 @@ message.
 
 HTML is served by GitHub Pages — `git push` and wait 1–3 minutes.
 
-`Code.gs` goes through clasp:
+`Code.gs` goes through `deploy.cmd`, which runs the tests first and refuses to
+push if any fail:
 
 ```
-clasp push
-clasp redeploy AKfycbzRB6XQrT8lx2lgcgv9nPQ18akiRCU8x58ritJIgbjNRkKxE3FZAifMREpZ4f7ZgSWD -d "what changed"
+.\deploy.cmd                    # push Code.gs only
+.\deploy.cmd "what changed"     # push, then redeploy the web app
 ```
+
+Push alone is enough for anything run from the Apps Script editor or the
+Analytics menu — the editor always runs the code just pushed. Redeploy only
+when the admin panel or the public form needs the change.
 
 **Never `clasp deploy`** — it creates a *new* deployment with a *new* URL and
-breaks `register.html`, which has the current one hardcoded. Redeploying to the
-existing id keeps the URL. Roll back with `-V <older version>`.
+breaks `register.html`, which has the current one hardcoded. `deploy.cmd` uses
+`clasp redeploy` against the existing id, which keeps the URL. Roll back with
+`clasp.cmd redeploy <same-id> -V <older version>`.
 
 Push the HTML **before** redeploying the backend. The reverse order breaks the
 admin panel in the window between the two.
+
+## Saurav's shell — commands must suit it
+
+Windows PowerShell 5.1. Two things bite, so write commands accordingly:
+
+- **Its execution policy blocks `.ps1`**, and npm's global shims are
+  `clasp.ps1` / `npm.ps1`. Bare `clasp` and `npm` fail with "running scripts is
+  disabled on this system". Always write **`clasp.cmd`** and **`npm.cmd`** —
+  `.cmd` is not blocked. He has decided **not** to loosen the policy; do not
+  propose it again.
+- **`&&` is not a valid separator.** One command per fenced block, never
+  chained.
+
+Also: the Bash tool's view of anything outside the project folder is sandboxed
+and does not match his machine. Global npm packages looked installed to Claude
+while being absent for him. Never conclude a tool exists from a check run
+outside the project directory — have him run it.
 
 ## Never write to the sheet without a preview first
 
