@@ -663,5 +663,29 @@ var s2 = call(w, { action: 'addReceipt', pin: '1234', data: enc(sib) });
 check('a clubbed retry in the other order is still caught',
       s2.receiptNo === s1.receiptNo, [s1.receiptNo, s2.receiptNo]);
 
+console.log('');
+console.log('--- two children sharing a name ---');
+w = freshWorld('1234');
+function rRow3(no, name, contact, amt, mon, note) {
+  return [no, '02 Jul 2026', name, contact, amt, mon, '2026', 'Cash', '',
+          'Monthly Fee', '', note || '', ''];
+}
+w.sheets.Receipts = makeSheet([rhd,
+  rRow3('SS-2026-0175','Krisha Agarwal','9830014153','2000','July','Fee for July'),
+  rRow3('SS-2026-0472','Krisha Agarwal','9831439849','2400','July','Fee for July'),
+  rRow3('SS-2026-0500','Solo Kid','9800000000','2000','July','Fee for July'),
+  rRow3('SS-2026-0501','Solo Kid','9800000000','1800','July','Fee for July')
+]);
+var nk = w.sandbox.findDuplicateReceipts();
+check('two contacts under one name are not called duplicates',
+      nk.indexOf('SAME NAME, DIFFERENT CONTACT NUMBERS') >= 0, 'see log');
+check('  ...and contribute nothing to the money at stake',
+      nk.indexOf('Same name, different family - NOT dup 1 grp') >= 0 ||
+      nk.indexOf('different family') >= 0, 'see log');
+check('one family with two amounts is still flagged',
+      nk.indexOf('DIFFERING AMOUNTS FOR THE SAME PERIOD') >= 0, 'see log');
+check('the contact is shown so the split is visible',
+      nk.indexOf('9830014153') >= 0 && nk.indexOf('9831439849') >= 0, 'contacts missing');
+
 console.log('\n' + (fail === 0 ? 'ALL ' + pass + ' CHECKS PASSED' : pass + ' passed, ' + fail + ' FAILED'));
 process.exit(fail === 0 ? 0 : 1);

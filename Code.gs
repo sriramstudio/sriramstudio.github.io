@@ -1669,6 +1669,7 @@ function findDuplicateReceipts() {
   const iType = head.indexOf('Fee Type');
   const iMode = head.indexOf('Payment Mode');
   const iNote = head.indexOf('Note');
+  const iCon  = head.indexOf('Contact');
 
   const groups = {};
   for (let r = 1; r < data.length; r++) {
@@ -1689,11 +1690,13 @@ function findDuplicateReceipts() {
       type: norm(row[iType]) || '(blank)',
       mode: norm(row[iMode]),
       note: norm(row[iNote]),
+      contact: iCon >= 0 ? norm(row[iCon]).replace(/\D/g, '') : '',
       seq: parseInt((no.match(/(\d+)\s*$/) || [0, 0])[1], 10)
     });
   }
 
-  const repeated = [], modeFix = [], spread = [], revised = [], misKeyed = [], otherType = [];
+  const repeated = [], modeFix = [], spread = [], revised = [], misKeyed = [],
+        otherType = [], namesake = [];
   let overRepeat = 0, overMode = 0, overSpread = 0, overRevised = 0;
 
   Object.keys(groups).forEach(function (k) {
@@ -1708,6 +1711,13 @@ function findDuplicateReceipts() {
       const rows = byType[t];
       if (rows.length < 2) return;
       flagged = true;
+
+      // Two children can share a name — there are two Krisha Agarwals on the
+      // roster. Different contact numbers mean different families, so these
+      // are separate fees, not one fee receipted twice.
+      const contacts = {};
+      rows.forEach(function (x) { if (x.contact) contacts[x.contact] = true; });
+      if (Object.keys(contacts).length > 1) { namesake.push(rows); return; }
 
       // Notes naming different months: the period was mis-keyed, not doubled.
       const noteMonths = {};
@@ -1742,8 +1752,8 @@ function findDuplicateReceipts() {
 
   const line = function (x) {
     return '     row ' + pad_(x.row, 6) + pad_(x.no, 15) + pad_(x.when, 8) +
-           pad_(money_(x.amt), 12) + pad_(x.mode, 6) +
-           (x.note ? x.note.substring(0, 40) : '') + '\n';
+           pad_(money_(x.amt), 12) + pad_(x.mode, 6) + pad_(x.contact || '-', 12) +
+           (x.note ? x.note.substring(0, 32) : '') + '\n';
   };
   const show = function (rows, out) {
     let t = '  ' + rows[0].who + '   [' + rows[0].period + ']\n';
@@ -1758,6 +1768,7 @@ function findDuplicateReceipts() {
   out += pad_('Same amount, different days', 38) + pad_(spread.length + ' grp', 9) + money_(overSpread) + '\n';
   out += pad_('Differing amounts (a reissue?)', 38) + pad_(revised.length + ' grp', 9) + money_(overRevised) + '\n';
   out += pad_('Period mis-keyed - NOT duplicates', 38) + pad_(misKeyed.length + ' grp', 9) + 'Rs. 0\n';
+  out += pad_('Same name, different family - NOT dup', 38) + pad_(namesake.length + ' grp', 9) + 'Rs. 0\n';
   out += pad_('Different fee type - usually fine', 38) + pad_(otherType.length + ' grp', 9) + 'Rs. 0\n';
   out += '\nMost likely over-counted: ' + money_(overRepeat + overMode) + '\n';
   out += 'Needs checking on top of that: ' + money_(overSpread + overRevised) + '\n\n';
@@ -1789,6 +1800,11 @@ function findDuplicateReceipts() {
     out += 'The notes name different months, so the Fee Month is wrong on one.\n';
     out += 'Fix the month; do not delete either.\n\n';
     misKeyed.forEach(function (g) { out += show(g); });
+  }
+  if (namesake.length) {
+    out += 'SAME NAME, DIFFERENT CONTACT NUMBERS - TWO DIFFERENT CHILDREN\n';
+    out += 'Separate families paying separate fees. Do not delete either.\n\n';
+    namesake.forEach(function (g) { out += show(g); });
   }
   if (otherType.length) {
     out += 'SAME PERIOD, DIFFERENT FEE TYPE (' + otherType.length + ' group(s), normally legitimate)\n';
