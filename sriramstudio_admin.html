@@ -685,7 +685,7 @@
       <div id="receipt-output"></div>
       <div style="margin-top:16px; display:flex; flex-direction:column; gap:10px;">
         <button class="btn-primary" id="btn-copy-receipt" onclick="copyReceiptText()">📋 Copy for WhatsApp</button>
-        <button class="btn-secondary" onclick="window.print()">🖨 Print / Save PDF</button>
+        <button class="btn-secondary" onclick="printReceipt()">🖨 Print / Save PDF</button>
         <button class="btn-secondary" onclick="showReceiptForm()">+ New Receipt</button>
       </div>
     </div>
@@ -1369,6 +1369,28 @@ function showReceiptForm() {
   currentFeeType = 'Monthly Fee';
   document.getElementById('amount-words').textContent = '';
   setCurrentMonthYear(); // also resets r-daterecv to today
+}
+
+// Chrome and Edge name a saved PDF after document.title, so printing from the
+// panel produced "Sriram Studio — Admin.pdf". Swap the title for the duration
+// of the print and put it back afterwards.
+function printReceipt() {
+  const original = document.title;
+  let restored = false;
+  const restore = function () {
+    if (restored) return;
+    restored = true;
+    document.title = original;
+    window.removeEventListener('afterprint', restore);
+  };
+
+  document.title = 'Sriram Studio - Receipt';
+  window.addEventListener('afterprint', restore);
+  // afterprint does not fire on every browser. The filename is fixed when the
+  // dialog opens, so restoring a few seconds later is safe either way.
+  setTimeout(restore, 5000);
+
+  window.print();
 }
 
 async function copyReceiptText() {
