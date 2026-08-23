@@ -4,9 +4,11 @@ const SRC = process.argv[2];
 
 function makeSheet(rows) {
   const data = rows.map(r => r.slice());
+  const notes = {};
   const chain = { setFontWeight: () => chain, setBackground: () => chain, setFontColor: () => chain };
   return {
     _data: data,
+    _notes: notes,
     getDataRange: () => ({ getValues: () => data.map(r => r.slice()) }),
     appendRow: r => data.push(r.slice()),
     deleteRow: i => data.splice(i - 1, 1),
@@ -33,7 +35,9 @@ function makeSheet(rows) {
           }
           return out;
         },
-        setFontWeight: () => range, setBackground: () => range, setFontColor: () => range
+        setFontWeight: () => range, setBackground: () => range, setFontColor: () => range,
+        getNote: () => notes[r + ':' + c] || '',
+        setNote: v => { notes[r + ':' + c] = v; return range; }
       };
       return range;
     },
@@ -505,8 +509,8 @@ w.sheets.Receipts = makeSheet([
 ]);
 var rep = w.sandbox.analyticsReport();
 check('a sibling inside a clubbed receipt counts as paid',
-      rep.indexOf('clubbed receipt  1') >= 0,
-      rep.split('\n').filter(function (l) { return l.indexOf('clubbed receipt') >= 0; }));
+      rep.indexOf('Have at least one receipt       1') >= 0,
+      rep.split('\n').filter(function (l) { return l.indexOf('at least one receipt') >= 0; }));
 check('  ...and is not listed as never invoiced',
       rep.indexOf('Diya Sen') < rep.indexOf('ACTIVE BUT NEVER INVOICED') ||
       rep.indexOf('ACTIVE BUT NEVER INVOICED') < 0,
@@ -686,6 +690,517 @@ check('one family with two amounts is still flagged',
       nk.indexOf('DIFFERING AMOUNTS FOR THE SAME PERIOD') >= 0, 'see log');
 check('the contact is shown so the split is visible',
       nk.indexOf('9830014153') >= 0 && nk.indexOf('9831439849') >= 0, 'contacts missing');
+
+console.log('');
+console.log('--- fee coverage by month ---');
+// Anchored to today rather than a fixed month, so these still mean something
+// next year.
+var MN = ['January','February','March','April','May','June','July','August',
+          'September','October','November','December'];
+var nowD  = new Date();
+var prevD = new Date(nowD.getFullYear(), nowD.getMonth() - 1, 1);
+var backD = new Date(nowD.getFullYear(), nowD.getMonth() - 3, 1);
+var curM  = MN[nowD.getMonth()],  curY  = String(nowD.getFullYear());
+var prevM = MN[prevD.getMonth()], prevY = String(prevD.getFullYear());
+var backM = MN[backD.getMonth()], backY = String(backD.getFullYear());
+var prevLabel = prevM + ' ' + prevY;
+var backLabel = backM + ' ' + backY;
+
+// dh column positions: 0 ID, 2 Type, 3 Student Name, 10 Phone, 14 Location,
+// 15 Joining Date, 21 Status, 22 Left On.
+function cRow(id, name, joining, status, leftOn, phone, type) {
+  var a = []; for (var i = 0; i < 24; i++) a.push('');
+  a[0] = id; a[2] = type || 'Existing Student'; a[3] = name; a[10] = phone || '';
+  a[14] = 'Bhawanipur'; a[15] = joining || backLabel;
+  a[21] = status || 'Active'; a[22] = leftOn || '';
+  return a;
+}
+function cRcpt(no, printed, students, mon, yr, type, amt, contact) {
+  return [no, '01 ' + mon.substring(0, 3) + ' ' + yr, printed, contact || '9000000001',
+          amt || '2000', mon, yr, 'Cash', '', type || 'Monthly Fee', '', '', students || ''];
+}
+
+w = freshWorld('1234');
+w.sheets.Enrollments = makeSheet([dh,
+  cRow('SR-1', 'Riya Sen'),
+  cRow('SR-2', 'Diya Sen'),
+  cRow('SR-3', 'Vani Maskara'),
+  cRow('SR-4', 'Jia Bhimani'),
+  cRow('SR-5', 'Jeena Bhimani'),
+  cRow('SR-6', 'Tashvi Kochar'),
+  cRow('SR-7', 'Late Joiner', curM + ' ' + curY),
+  cRow('SR-8', 'Gone Away', backLabel, 'Left', backLabel),
+  cRow('SR-9', 'Workshop Only', backLabel, 'Active', '', '', 'Workshop')
+]);
+w.sheets.Receipts = makeSheet([rhd,
+  // Siblings clubbed onto one receipt, the modern way.
+  cRcpt('SS-1', 'Riya Sen & Diya Sen', 'Riya Sen | Diya Sen', prevM, prevY),
+  // The same pairing the old way: one cell, only the last child has a surname.
+  cRcpt('SS-2', 'Jia & Jeena Bhimani', '', prevM, prevY),
+  // Spelled differently from the roster.
+  cRcpt('SS-3', 'Vaani Maskara', 'Vaani Maskara', prevM, prevY),
+  cRcpt('SS-4', 'Tashvi Kocahr', 'Tashvi Kocahr', prevM, prevY),
+  // Not a month's tuition, so it must not cover anybody.
+  cRcpt('SS-5', 'Late Joiner', 'Late Joiner', prevM, prevY, 'Registration Fee', '1000'),
+  // A name that is on no roster row at all.
+  cRcpt('SS-6', 'Someone Elsewhere', 'Someone Elsewhere', prevM, prevY)
+]);
+
+var mc = w.sandbox.feeCoverageForMonth(prevLabel);
+check('both siblings on a clubbed receipt count as paid',
+      mc.indexOf('Riya Sen') > mc.indexOf('PAID (') &&
+      mc.indexOf('Diya Sen') > mc.indexOf('PAID ('), 'see log');
+check('a legacy "Jia & Jeena Bhimani" cell pays for both children',
+      mc.indexOf('Jia Bhimani') > mc.indexOf('PAID (') &&
+      mc.indexOf('Jeena Bhimani') > mc.indexOf('PAID ('), 'see log');
+check('Vaani Maskara on a receipt is Vani Maskara on the roster',
+      mc.indexOf('NO RECEIPT FOR') < 0 || mc.indexOf('Vani Maskara') > mc.indexOf('PAID ('),
+      'see log');
+check('a one-character misspelling still counts as paid',
+      mc.indexOf('Tashvi Kochar') > mc.indexOf('PAID ('), 'see log');
+check('a registration fee does not cover the month',
+      mc.indexOf('Late Joiner') < 0 || mc.indexOf('Late Joiner') > mc.indexOf('NO RECEIPT FOR'),
+      'registration fee counted as monthly');
+// The six due are Riya, Diya, Vani, Jia, Jeena and Tashvi: the late joiner,
+// the student who left and the workshop attendee are all out of scope.
+var mcPaid = mc.substring(mc.indexOf('PAID ('));
+check('a student who joins later is not due in an earlier month',
+      mc.indexOf('Students due to pay              6') >= 0 &&
+      mcPaid.indexOf('Late Joiner') < 0,
+      mc.split('\n').filter(function (l) { return l.indexOf('due to pay') >= 0; }));
+check('a workshop-only enrolment is not billed monthly',
+      mc.indexOf('Workshop Only') < 0, 'workshop attendee counted as a monthly student');
+check('a student who left before the month is not counted',
+      mcPaid.indexOf('Gone Away') < 0 && mc.indexOf('NO RECEIPT FOR') < 0,
+      'left student still expected');
+check('everyone due that month is covered',
+      mc.indexOf('No receipt                       0') >= 0,
+      mc.split('\n').filter(function (l) { return l.indexOf('No receipt') >= 0; }));
+check('a receipt name matching no roster row is surfaced, not swallowed',
+      mc.indexOf('Someone Elsewhere') >= 0, 'unknown name not reported');
+check('  ...and holds the month back from being declared complete',
+      mc.indexOf('ARE PAID FOR') < 0,
+      'a month with an unaccounted-for receipt name was called complete');
+
+var gaps = w.sandbox.feeGapsByStudent();
+check('a student with no monthly receipt at all is listed as never invoiced',
+      gaps.indexOf('NEVER INVOICED') >= 0 && gaps.indexOf('Late Joiner') >= 0,
+      gaps.split('\n').filter(function (l) { return l.indexOf('Never had') >= 0; }));
+
+// Drop the one unaccounted-for name and the month should read as settled.
+w.sheets.Receipts._data.pop();
+var clean = w.sandbox.feeCoverageForMonth(prevLabel);
+check('with every receipt name accounted for, the month reads as fully paid',
+      clean.indexOf('ARE PAID FOR') >= 0,
+      clean.split('\n').filter(function (l) { return l.indexOf('No receipt') >= 0; }));
+
+// Jia and Jeena are two children, not one spelled two ways.
+w.sheets.Receipts = makeSheet([rhd,
+  cRcpt('SS-10', 'Jia Bhimani', 'Jia Bhimani', prevM, prevY)
+]);
+var solo = w.sandbox.feeCoverageForMonth(prevLabel);
+check('Jia paying does not mark Jeena paid',
+      solo.indexOf('Jeena Bhimani') > solo.indexOf('NO RECEIPT FOR'),
+      solo.split('\n').filter(function (l) { return l.indexOf('Jeena') >= 0; }));
+check('  ...and Jia herself is still credited',
+      solo.indexOf('Jia Bhimani') > solo.indexOf('PAID ('), 'see log');
+check('an incomplete month is not reported as fully paid',
+      solo.indexOf('ARE PAID FOR') < 0, 'incomplete month called complete');
+
+var pv = w.sandbox.previewReceiptNameMatching();
+// Scoped to the pair this fixture actually carries: the configured lists
+// describe the real sheet, not the test roster.
+check('the preview binds each configured distinct student to its own row',
+      pv.indexOf('"Jia Bhimani" -> row') >= 0 && pv.indexOf('"Jeena Bhimani" -> row') >= 0,
+      pv.split('\n').filter(function (l) { return l.indexOf('Bhimani"') >= 0; }));
+check('the preview shows which spelling the equivalents resolved to',
+      pv.indexOf('Vani Maskara') >= 0, 'equivalence not reported');
+
+// A sibling who is missing from the roster must not be credited to the one
+// sibling who is on it.
+w.sheets.Enrollments = makeSheet([dh, cRow('SR-2', 'Diya Sen')]);
+w.sheets.Receipts = makeSheet([rhd,
+  cRcpt('SS-20', 'Riya Sen & Diya Sen', 'Riya Sen | Diya Sen', prevM, prevY)
+]);
+var clash = w.sandbox.previewReceiptNameMatching();
+check('a sibling missing from the roster is not credited to the other one',
+      clash.indexOf('NO ROSTER ROW AT ALL') >= 0 && clash.indexOf('"riya sen"') >= 0,
+      'the missing sibling was silently absorbed');
+
+var tbl = w.sandbox.feeCoverageByMonth();
+check('the headline table reports a month per row',
+      tbl.indexOf('FEE COVERAGE BY MONTH') >= 0 &&
+      tbl.indexOf(MN[prevD.getMonth()].substring(0, 3) + ' ' + prevY) >= 0, 'see log');
+check('  ...and nothing in it writes to the sheet',
+      tbl.indexOf('Nothing was changed') >= 0, 'missing the read-only notice');
+
+console.log('');
+console.log('--- names run together, and first names alone ---');
+// Every fixture here is a real pattern from the studio's receipts.
+w = freshWorld('1234');
+w.sheets.Enrollments = makeSheet([dh,
+  cRow('SR-1', 'Anshika Shome'),
+  cRow('SR-2', 'Anvika Shome'),
+  cRow('SR-3', 'Nyra Bharuka'),
+  cRow('SR-4', 'Nyshita Bharuka'),
+  cRow('SR-5', 'Jia Bhimani'),
+  cRow('SR-6', 'Jeena Bhimani'),
+  cRow('SR-7', 'Hiral Redh'),
+  cRow('SR-8', 'Jia Doshi'),
+  cRow('SR-9', 'Solo Child')
+]);
+w.sheets.Receipts = makeSheet([rhd,
+  cRcpt('SS-1', 'Anshika Anvika Shome', '', prevM, prevY),
+  cRcpt('SS-2', 'Nyra Nyshita Bharuka', '', prevM, prevY),
+  cRcpt('SS-3', 'Jeena Jia', '', prevM, prevY),
+  cRcpt('SS-4', 'Hiral', '', prevM, prevY)
+]);
+var sp = w.sandbox.previewReceiptNameMatching();
+check('two sisters written as one name are read as two children',
+      sp.indexOf('Anshika Shome  +  Anvika Shome') >= 0 ||
+      sp.indexOf('Anvika Shome  +  Anshika Shome') >= 0,
+      sp.split('\n').filter(function (l) { return l.indexOf('anshika') >= 0; }));
+check('  ...and so are two more with a different surname',
+      sp.indexOf('Nyra Bharuka') >= 0 && sp.indexOf('Nyshita Bharuka') >= 0, 'see log');
+check('"Jeena Jia" with no surname at all resolves to both Bhimanis',
+      sp.indexOf('Jeena Bhimani') >= 0 && sp.indexOf('Jia Bhimani') >= 0,
+      sp.split('\n').filter(function (l) { return l.indexOf('jeena jia') >= 0; }));
+check('  ...and does not grab the other Jia on the roster',
+      sp.indexOf('Jia Doshi') < 0, 'the wrong Jia was credited');
+check('a first name on its own matches the only child who answers to it',
+      sp.indexOf('MATCHED ON FIRST NAME ALONE') >= 0 && sp.indexOf('Hiral Redh') >= 0,
+      'see log');
+
+var spm = w.sandbox.feeCoverageForMonth(prevLabel);
+// Four receipts, seven children: two Shomes, two Bharukas, two Bhimanis, Hiral.
+check('all seven children named across those four receipts count as paid',
+      spm.indexOf('Covered by a receipt             7') >= 0,
+      spm.split('\n').filter(function (l) { return l.indexOf('Covered by') >= 0; }));
+check('  ...and the two nobody paid for are still listed',
+      spm.indexOf('Solo Child') > spm.indexOf('NO RECEIPT FOR') &&
+      spm.indexOf('Jia Doshi') > spm.indexOf('NO RECEIPT FOR'), 'see log');
+
+// A first name two children answer to is a guess, so it must not be made.
+w.sheets.Receipts = makeSheet([rhd, cRcpt('SS-5', 'Jia', '', prevM, prevY)]);
+var amb = w.sandbox.previewReceiptNameMatching();
+check('a first name two children share is credited to neither',
+      amb.indexOf('MATCHED ON FIRST NAME ALONE') < 0, 'a shared first name was guessed');
+
+// Duplicate roster rows: say so, rather than just "too close to call".
+w.sheets.Enrollments = makeSheet([dh,
+  cRow('SR-1', 'Krisha Agarwal', '', 'Active', '', '9111111111'),
+  cRow('SR-2', 'Krisha Agarwal', '', 'Active', '', '9222222222')
+]);
+w.sheets.Receipts = makeSheet([rhd,
+  cRcpt('SS-6', 'Krisha Agarwal', 'Krisha Agarwal', prevM, prevY, 'Monthly Fee', '2000', '9333333333')
+]);
+var why = w.sandbox.previewReceiptNameMatching();
+check('an unsplittable shared name says why it could not be called',
+      why.indexOf('rows in Enrollments carry this exact name') >= 0,
+      why.split('\n').filter(function (l) { return l.indexOf('why:') >= 0; }));
+
+// The contact number on the receipt is enough to tell them apart.
+w.sheets.Receipts = makeSheet([rhd,
+  cRcpt('SS-7', 'Krisha Agarwal', 'Krisha Agarwal', prevM, prevY, 'Monthly Fee', '2000', '9222222222')
+]);
+var byph = w.sandbox.previewReceiptNameMatching();
+check('  ...but a matching contact number does tell them apart',
+      byph.indexOf('by phone') >= 0, 'contact number ignored');
+
+console.log('');
+console.log('--- a near-miss between two real children ---');
+// 'Janvi Jain' is one character from both Jahnvi and Janhvi, who are two
+// different children. Nothing but a contact number can settle it.
+w = freshWorld('1234');
+w.sheets.Enrollments = makeSheet([dh,
+  cRow('SR-1', 'Jahnvi Jain', '', 'Active', '', '9111111111'),
+  cRow('SR-2', 'Janhvi Jain', '', 'Active', '', '9222222222')
+]);
+w.sheets.Receipts = makeSheet([rhd,
+  cRcpt('SS-1', 'Janvi Jain', 'Janvi Jain', prevM, prevY, 'Monthly Fee', '2000', '9000000009')
+]);
+var tie = w.sandbox.previewReceiptNameMatching();
+check('a name one character from two children is credited to neither',
+      tie.indexOf('TOO CLOSE TO CALL               1') >= 0,
+      tie.split('\n').filter(function (l) { return l.indexOf('TOO CLOSE') >= 0; }));
+check('  ...and both candidates are named with their rows',
+      tie.indexOf('Jahnvi Jain') >= 0 && tie.indexOf('Janhvi Jain') >= 0 &&
+      tie.indexOf('row 2') >= 0 && tie.indexOf('row 3') >= 0,
+      tie.split('\n').filter(function (l) { return l.indexOf('why:') >= 0; }));
+
+// The same receipt, now carrying one family's number.
+w.sheets.Receipts = makeSheet([rhd,
+  cRcpt('SS-2', 'Janvi Jain', 'Janvi Jain', prevM, prevY, 'Monthly Fee', '2000', '9222222222')
+]);
+var settled = w.sandbox.previewReceiptNameMatching();
+check('a contact number settles the tie',
+      settled.indexOf('by phone') >= 0 &&
+      settled.indexOf('TOO CLOSE TO CALL               0') >= 0,
+      settled.split('\n').filter(function (l) { return l.indexOf('janvi') >= 0; }));
+check('  ...to the family whose number it is',
+      settled.indexOf('-> Janhvi Jain') >= 0, 'credited to the wrong child');
+
+// The month must NOT be used to break a tie the name itself cannot settle.
+w.sheets.Enrollments = makeSheet([dh,
+  cRow('SR-1', 'Jahnvi Jain', backLabel, 'Left', backLabel, '9111111111'),
+  cRow('SR-2', 'Janhvi Jain', '', 'Active', '', '9222222222')
+]);
+w.sheets.Receipts = makeSheet([rhd,
+  cRcpt('SS-3', 'Janvi Jain', 'Janvi Jain', prevM, prevY, 'Monthly Fee', '2000', '')
+]);
+var noguess = w.sandbox.previewReceiptNameMatching();
+check('one child having left does not settle a spelling tie',
+      noguess.indexOf('TOO CLOSE TO CALL               1') >= 0,
+      'the enrolled child was picked on no real evidence');
+
+console.log('');
+console.log('--- the sheet tabs ---');
+w = freshWorld('1234');
+w.sheets.Enrollments = makeSheet([dh,
+  cRow('SR-1', 'Paid Up'),
+  cRow('SR-2', 'Behind Child'),
+  cRow('SR-3', 'Gone Away', backLabel, 'Left', backLabel),
+  cRow('SR-4', 'Workshop Only', backLabel, 'Active', '', '', 'Workshop')
+]);
+w.sheets.Receipts = makeSheet([rhd,
+  cRcpt('SS-1', 'Paid Up', 'Paid Up', backM, backY),
+  cRcpt('SS-2', 'Paid Up', 'Paid Up', prevM, prevY),
+  cRcpt('SS-3', 'Behind Child', 'Behind Child', backM, backY),
+  cRcpt('SS-4', 'Gone Away', 'Gone Away', backM, backY)
+]);
+var model = w.sandbox.analyticsTabModel_(w.sandbox.buildFeeCoverage_());
+
+check('the students tab carries one row per monthly-fee student',
+      model.students.rows.length === 3,
+      model.students.rows.map(function (r) { return r[2]; }));
+check('  ...and leaves the workshop attendee out',
+      model.students.rows.every(function (r) { return r[2] !== 'Workshop Only'; }),
+      'workshop attendee included');
+
+var monthCols = model.students.head.slice(model.firstMonthCol - 1);
+check('  ...with a column per month, newest last',
+      monthCols[monthCols.length - 1] === curM + ' ' + curY,
+      [monthCols[0], monthCols[monthCols.length - 1]]);
+
+var behind = model.students.rows.filter(function (r) { return r[2] === 'Behind Child'; })[0];
+var prevIdx = model.firstMonthCol - 1 + monthCols.indexOf(prevLabel);
+check('a month with no receipt is marked UNPAID',
+      behind[prevIdx] === 'UNPAID', behind[prevIdx]);
+var paidUp = model.students.rows.filter(function (r) { return r[2] === 'Paid Up'; })[0];
+check('  ...and a month with one is marked PAID',
+      paidUp[prevIdx] === 'PAID', paidUp[prevIdx]);
+var gone = model.students.rows.filter(function (r) { return r[2] === 'Gone Away'; })[0];
+check('  ...and a month after the student left is left blank',
+      gone[prevIdx] === '', gone[prevIdx]);
+
+check('the students tab is sorted with the worst arrears first',
+      model.students.rows[0][12] >= model.students.rows[1][12],
+      model.students.rows.map(function (r) { return [r[2], r[12]]; }));
+
+check('the coverage tab holds one row per month',
+      model.coverage.rows.length === model.monthNames.length, model.coverage.rows.length);
+check('  ...with coverage as a fraction, for percent formatting',
+      model.coverage.rows.every(function (r) { return r[4] >= 0 && r[4] <= 1; }),
+      model.coverage.rows.map(function (r) { return r[4]; }));
+
+check('the gaps tab lists only students missing a month',
+      model.gaps.rows.every(function (r) { return r[6] > 0; }),
+      model.gaps.rows.map(function (r) { return [r[1], r[6]]; }));
+check('  ...and spells out which months',
+      model.gaps.rows.length > 0 && model.gaps.rows[0][8].length > 0, 'no month list');
+
+check('the names tab puts the ones needing a decision at the top',
+      model.names.rows.length > 0, 'no names');
+
+check('the dashboard opens on the last month that should be finished',
+      model.defaultMonth === prevLabel, [model.defaultMonth, prevLabel]);
+
+console.log('');
+console.log('--- the analytics tabs cannot eat the data tabs ---');
+var ss = w.sandbox.SpreadsheetApp.getActiveSpreadsheet();
+['Enrollments', 'Receipts', 'Config'].forEach(function (name) {
+  var threw = false;
+  try { w.sandbox.analyticsSheet_(ss, name); } catch (e) { threw = /data tab/.test(e.message); }
+  check('refuses to write to ' + name, threw, 'it did not refuse');
+});
+check('  ...and Enrollments still has every row',
+      w.sheets.Enrollments._data.length === 5, w.sheets.Enrollments._data.length);
+
+// A tab of the same name that somebody else made must not be clobbered.
+w.sheets['Analytics Coverage'] = makeSheet([['Something', 'Anjali', 'typed']]);
+var guarded = false;
+try {
+  w.sandbox.analyticsSheet_(ss, 'Analytics Coverage');
+} catch (e) { guarded = /already exists/.test(e.message); }
+check('refuses to overwrite a same-named tab it did not generate', guarded, 'it overwrote it');
+check('  ...leaving that tab untouched',
+      w.sheets['Analytics Coverage']._data.length === 1,
+      w.sheets['Analytics Coverage']._data);
+
+console.log('');
+console.log('--- one receipt, two months ---');
+w = freshWorld('1234');
+var rp = w.sandbox.receiptPeriods_;
+var P = function (mName, y) { return y * 12 + MN.indexOf(mName); };
+
+check('a note naming two months covers both',
+      rp(P('July', 2026), 'July and August fees').periods.join(',') ===
+      [P('July', 2026), P('August', 2026)].join(','),
+      rp(P('July', 2026), 'July and August fees').periods.map(function (p) {
+        return MN[p % 12] + ' ' + Math.floor(p / 12); }));
+
+check('  ...however it is abbreviated',
+      rp(P('July', 2026), '2 months fee - Jul & Aug').periods.length === 2,
+      rp(P('July', 2026), '2 months fee - Jul & Aug').periods.length);
+
+check('  ...and is flagged as spanning months',
+      rp(P('July', 2026), 'July and August fees').multi === true, 'not flagged');
+
+check('December and January roll into the next year',
+      rp(P('December', 2026), 'December and January').periods.join(',') ===
+      [P('December', 2026), P('January', 2027)].join(','),
+      rp(P('December', 2026), 'December and January').periods.map(function (p) {
+        return MN[p % 12] + ' ' + Math.floor(p / 12); }));
+
+check('an explicit year in the note is honoured',
+      rp(P('January', 2027), 'fees for January February 2027').periods.join(',') ===
+      [P('January', 2027), P('February', 2027)].join(','),
+      rp(P('January', 2027), 'fees for January February 2027').periods.length);
+
+// A single different month is a mis-keyed Fee Month, not a second month paid.
+check('a note naming one different month does NOT add a month',
+      rp(P('July', 2026), 'fee for August').periods.length === 1,
+      rp(P('July', 2026), 'fee for August').periods.length);
+check('a note naming the same month changes nothing',
+      rp(P('August', 2026), 'fee for August').periods.length === 1, 'extra month added');
+check('an empty note changes nothing',
+      rp(P('August', 2026), '').periods.length === 1, 'extra month added');
+
+// "2 months" without saying which two must not be guessed at.
+var vague = rp(P('August', 2026), '2 months fee paid');
+check('"2 months fee" with no months named is not guessed',
+      vague.periods.length === 1 && vague.vague === true,
+      [vague.periods.length, vague.vague]);
+
+check('a month more than six months away is prose, not a fee period',
+      rp(P('August', 2026), 'August fee, joined January, sister in December').periods
+        .every(function (p) { return Math.abs(p - P('August', 2026)) <= 6; }),
+      'a distant month was counted');
+
+console.log('');
+console.log('--- two-month receipts in the coverage numbers ---');
+w = freshWorld('1234');
+w.sheets.Enrollments = makeSheet([dh,
+  cRow('SR-1', 'Two Months Kid', backLabel),
+  cRow('SR-2', 'One Month Kid', backLabel)
+]);
+w.sheets.Receipts = makeSheet([rhd,
+  // Filed under the earlier month, note says it settles both.
+  [ 'SS-1', '01 ' + backM.substring(0, 3) + ' ' + backY, 'Two Months Kid', '9000000001',
+    '4000', backM, backY, 'Cash', '', 'Monthly Fee', '',
+    backM + ' and ' + prevM + ' fees', 'Two Months Kid' ],
+  [ 'SS-2', '01 ' + backM.substring(0, 3) + ' ' + backY, 'One Month Kid', '9000000002',
+    '2000', backM, backY, 'Cash', '', 'Monthly Fee', '', '', 'One Month Kid' ]
+]);
+var mm = w.sandbox.feeCoverageForMonth(prevLabel);
+check('the child who paid two months up front counts as paid in the later month',
+      mm.indexOf('Two Months Kid') > mm.indexOf('PAID ('),
+      mm.split('\n').filter(function (l) { return l.indexOf('Two Months') >= 0; }));
+check('  ...while the child who paid one month shows as unpaid',
+      mm.indexOf('One Month Kid') > mm.indexOf('NO RECEIPT FOR'),
+      mm.split('\n').filter(function (l) { return l.indexOf('One Month') >= 0; }));
+check('  ...and no receipt is booked into the later month',
+      mm.indexOf('Receipts booked to this month    0') >= 0,
+      mm.split('\n').filter(function (l) { return l.indexOf('Receipts booked') >= 0; }));
+
+var back = w.sandbox.feeCoverageForMonth(backLabel);
+check('the money stays in the month the receipt was filed under',
+      back.indexOf('Rs. 6,000') >= 0,
+      back.split('\n').filter(function (l) { return l.indexOf('Collected') >= 0; }));
+
+var mmr = w.sandbox.previewMultiMonthReceipts();
+check('the two-month receipt is listed for checking',
+      mmr.indexOf('SS-1') >= 0 && mmr.indexOf('READ AS SEVERAL MONTHS') >= 0, 'see log');
+check('  ...and the single-month one is not',
+      mmr.indexOf('SS-2') < 0, 'a one-month receipt was listed');
+
+console.log('');
+console.log('--- a late fee is not a month paid ---');
+// Every note below is real, copied from the Receipts tab.
+var say = function (primary, note) {
+  var r = rp(primary, note);
+  return { got: r.periods.map(function (p) { return MN[p % 12]; }).join('+'),
+           held: (r.ignored || []).map(function (p) { return MN[p % 12]; }).join(',') };
+};
+var JUN = P('June', 2026), JUL = P('July', 2026), AUG = P('August', 2026);
+
+var a = say(JUN, 'Fee for June & late fee for May');
+check('"Fee for June & late fee for May" pays June only',
+      a.got === 'June', a);
+check('  ...and says May was mentioned but not counted', a.held === 'May', a);
+
+check('"Fee for June + late fee of May" pays June only',
+      say(JUN, 'Fee for June + late fee of May').got === 'June',
+      say(JUN, 'Fee for June + late fee of May'));
+
+check('"Fee for July + 100 advanced for august" pays July only',
+      say(JUL, 'Fee for July + 100 advanced for august').got === 'July',
+      say(JUL, 'Fee for July + 100 advanced for august'));
+
+check('"Fee for August + late fee of July" pays August only',
+      say(AUG, 'Fee for August + late fee of July').got === 'August',
+      say(AUG, 'Fee for August + late fee of July'));
+
+// The qualifier must not swallow months that ARE being paid.
+check('"Fee for May, June + late fee of May" still pays May and June',
+      say(JUN, 'Fee for May, June + late fee of May').got === 'May+June',
+      say(JUN, 'Fee for May, June + late fee of May'));
+check('  ...and holds nothing back, May was paid in its own right',
+      say(JUN, 'Fee for May, June + late fee of May').held === '',
+      say(JUN, 'Fee for May, June + late fee of May'));
+
+check('"Fee for May + june + late fees" pays both months',
+      say(JUN, 'Fee for May + june + late fees').got === 'May+June',
+      say(JUN, 'Fee for May + june + late fees'));
+
+check('"Fee for May & june (100 due)" pays both — an amount owing is not a qualifier',
+      say(JUN, 'Fee for May & june (100 due)').got === 'May+June',
+      say(JUN, 'Fee for May & june (100 due)'));
+
+check('"Fee for August + balance of July" pays both — a balance is that month\'s fee',
+      say(AUG, 'Fee for August + balance of July').got === 'July+August',
+      say(AUG, 'Fee for August + balance of July'));
+
+check('"Fee for April, May & June" pays all three',
+      say(JUN, 'Fee for April, May & June').got === 'April+May+June',
+      say(JUN, 'Fee for April, May & June'));
+
+check('"Fee for July & august" is unaffected',
+      say(JUL, 'Fee for July & august').got === 'July+August',
+      say(JUL, 'Fee for July & august'));
+
+check('"Fee for August & September" reaches into next month',
+      say(AUG, 'Fee for August & September').got === 'August+September',
+      say(AUG, 'Fee for August & September'));
+
+// And the student grid must show it.
+console.log('');
+console.log('--- the student grid reflects a two-month payment ---');
+w = freshWorld('1234');
+w.sheets.Enrollments = makeSheet([dh, cRow('SR-1', 'Paid Ahead', backLabel)]);
+w.sheets.Receipts = makeSheet([rhd,
+  [ 'SS-1', '01 ' + backM.substring(0, 3) + ' ' + backY, 'Paid Ahead', '9000000001',
+    '4000', backM, backY, 'Cash', '', 'Monthly Fee', '',
+    'Fee for ' + backM + ' & ' + prevM, 'Paid Ahead' ]
+]);
+var gm = w.sandbox.analyticsTabModel_(w.sandbox.buildFeeCoverage_());
+var cols = gm.students.head.slice(gm.firstMonthCol - 1);
+var row = gm.students.rows[0];
+check('both months read PAID in the students grid',
+      row[gm.firstMonthCol - 1 + cols.indexOf(backLabel)] === 'PAID' &&
+      row[gm.firstMonthCol - 1 + cols.indexOf(prevLabel)] === 'PAID',
+      [row[gm.firstMonthCol - 1 + cols.indexOf(backLabel)],
+       row[gm.firstMonthCol - 1 + cols.indexOf(prevLabel)]]);
 
 console.log('\n' + (fail === 0 ? 'ALL ' + pass + ' CHECKS PASSED' : pass + ' passed, ' + fail + ' FAILED'));
 process.exit(fail === 0 ? 0 : 1);

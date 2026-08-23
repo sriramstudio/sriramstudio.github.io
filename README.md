@@ -318,6 +318,142 @@ nothing — run it, read the log, and only then run its counterpart.
 
 ---
 
+## 11A. Analytics — has everyone paid?
+
+Also editor-only, and every one of them writes nothing. None is reachable over
+the web: they read the whole student database, so they stay off `doGet`.
+
+| Function | What it answers |
+|----------|-----------------|
+| `analyticsReport` | The overview — roster, centres, ages, receipts, revenue, and who is behind. |
+| `feeCoverageByMonth` | **Month by month: how many students were due, how many a receipt covers, and whether the month is fully paid.** Start here. |
+| `feeCoverageForMonth('August 2026')` | One month in full: every student with no receipt, with phone and centre, ready to chase. Run with no argument for the latest month that has receipts. |
+| `previewReceiptNameMatching` | How every name printed on a receipt was tied back to a row in `Enrollments`. **Read this before believing the other three.** |
+| `previewMultiMonthReceipts` | Every receipt read as settling more than one month, and why. |
+| `feeGapsByStudent` | Per student, which months have no receipt naming them. |
+
+**How a month is counted.** `Enrollments` is the golden source. A student is
+expected to pay from their `Joining Date` month until today, or until the month
+in `Left On` if they have left. Workshop rows and applications nobody acted on
+are not expected to pay a monthly fee — unless a monthly receipt names them, in
+which case they are. Only `Monthly Fee` receipts (and receipts with the fee
+type left blank) cover a month; registration and workshop fees do not.
+
+**Two months on one receipt.** Families often settle two months together. The
+`Fee Month` column holds only one month, so the second is read from the **note**
+— `July and August fees`, `2 months fee - Jul & Aug`. Both months then count as
+paid for every child on that receipt. `December and January` correctly rolls
+into the next year.
+
+Naming a month is not the same as paying for it. `Fee for June & late fee for
+May` settles **June only** — May's is a penalty, and May's own tuition may still
+be outstanding. Same for `100 advanced for August`: an advance is not August's
+fee. `Balance of July` **is** counted, because that money is July's fee. Every
+month held back this way is listed by `previewMultiMonthReceipts`.
+
+Three deliberate limits. A note naming a *single* month different from `Fee Month`
+does **not** add a month — that is a mis-keyed `Fee Month`, which
+`findDuplicateReceipts` already reports. And a note saying `2 months fee`
+without naming which two is **not** guessed at; it is listed by
+`previewMultiMonthReceipts` so the note can be corrected. Naming the months in
+the note is all it takes.
+
+The money stays in the month the receipt is filed under — that is when the cash
+came in. Only the *coverage* spans both months.
+
+**Siblings.** One receipt covering `Riya Sen | Diya Sen` counts for both
+children, and so does an older receipt with `Riya & Diya Sen` typed into one
+cell — the last child on the receipt carries the surname for the rest. Names
+run together with no separator at all are handled too: `Anshika Anvika Shome`
+is read as two sisters, and `Jeena Jia` names one child from her first name and
+lends her surname to the other. This is only accepted when every piece lands on
+a *different* child, so a single mangled name is never split by accident.
+
+**Spelling.** A receipt name one or two characters away from exactly one roster
+name is credited to that student. Anything further apart, or equally close to
+two children, is credited to nobody and listed instead — so a month may show as
+short until you look. A sibling who is not on the roster at all is never
+credited to the sibling who is.
+
+**First name only.** A receipt reading just `Hiral` is credited when exactly one
+child answers to that name. When two do, it is reported instead — and the report
+names them both, with their rows.
+
+**Two children, one name.** Where the name cannot be told apart on its own, the
+`Contact` number on the receipt is matched against `Phone` in `Enrollments` and
+settles it. **This is why filling in phone numbers matters**: two children
+called Krisha Agarwal were unattributable until their numbers were on the
+roster. For an exact shared name, a child being the only one enrolled that
+month will also settle it; for a near-miss spelling that is *not* enough, and
+the report says so rather than picking one.
+
+**Names that need telling by hand** live at the top of the fee-coverage section
+of `Code.gs`:
+
+```
+const NAME_EQUIVALENTS = [
+  ['Vani Maskara', 'Vaani Maskara'],
+  ['Krishanya Kanoria', 'Krishnaya Kanodia'],
+  ['Jisha Desai', 'Josh’s Desai', "Josh's Desai"]
+];
+const DISTINCT_STUDENTS = [
+  ['Jia Bhimani', 'Jeena Bhimani'],
+  ['Jahnvi Jain', 'Janhvi Jain']
+];
+```
+
+`NAME_EQUIVALENTS` is one child spelled two ways — whichever spelling is in
+`Enrollments` wins, and the other is treated as that child on receipts.
+`DISTINCT_STUDENTS` is the opposite: two real children with similar names,
+pinned to their own rows so the spelling matcher can never merge them.
+`previewReceiptNameMatching` prints the state of both lists, including whether
+each configured name was actually found in `Enrollments` — check that first if
+a pair is not behaving. Add to either list as new cases turn up.
+
+---
+
+## 11B. The dashboard tabs (for Anjali)
+
+Everything in 11A also exists as ordinary tabs in the Sheet, so nobody has to
+open the Apps Script editor.
+
+**The `Analytics` menu** sits in the Sheet's own menu bar, next to Help. It
+appears when the Sheet is opened — after pushing a new `Code.gs`, reload the
+Sheet once for it to show up.
+
+| Menu item | What it does |
+|-----------|--------------|
+| **Refresh dashboard** | Rebuilds all five tabs from the current data. |
+| **Preview refresh** | Says what a refresh would do. Writes nothing. |
+| **Name matching report** | Section 11A's name report, in a window. |
+| **Two-month receipts report** | Every receipt read as settling more than one month. |
+| **Fee gaps report** | Who is behind, in a window. |
+
+**The five tabs:**
+
+| Tab | What it holds |
+|-----|---------------|
+| `Analytics Dashboard` | Pick a month; the counts and the unpaid list update instantly. |
+| `Analytics Coverage` | One row per month — due, paid, unpaid, collected — and a chart. |
+| `Analytics Students` | One row per student, one column per month, PAID/UNPAID colour-coded. Filter it. |
+| `Analytics Names` | Every name printed on a receipt and the row it was credited to. Anything needing a decision sorts to the top. |
+| `Analytics Gaps` | Students missing at least one month, worst first, with phone numbers. |
+
+**The month picker is a formula, not a script.** Changing the month on the
+Dashboard updates it at once — no waiting, no permission prompt. Only a change
+to `Enrollments` or `Receipts` needs **Refresh dashboard**.
+
+**Safety.** A refresh writes only to those five tabs. `Enrollments`, `Receipts`
+and `Config` are opened read-only and a write to them is refused outright.
+Every generated tab is stamped with a hidden marker in the note on cell A1; if
+a tab of the same name exists without that marker, the refresh **stops and
+changes nothing** rather than overwriting somebody's work. Deleting a generated
+tab is safe — the next refresh rebuilds it.
+
+Do not type into the generated tabs. Edits there are lost on the next refresh.
+
+---
+
 ## 12. Testing
 
 `tests/auth.test.js` runs `Code.gs` against stubbed Apps Script globals — no
