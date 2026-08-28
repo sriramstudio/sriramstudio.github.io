@@ -1603,5 +1603,43 @@ var threw = false;
 try { w.sandbox.hideAnalyticsWorkingTabs(); } catch (e) { threw = true; }
 check('a tab that has been deleted by hand does not break hiding', !threw, 'it threw');
 
+console.log('');
+console.log('--- one bad date must not blow the tabs up ---');
+w = freshWorld('1234');
+// A joining date years in the past, of the sort that turns up in real rosters.
+w.sheets.Enrollments = makeSheet([dh,
+  cRow('SR-1', 'Normal Kid', backLabel),
+  cRow('SR-2', 'Ancient Record', 'January 2010')
+]);
+w.sheets.Receipts = makeSheet([rhd,
+  cRcpt('SS-1', 'Normal Kid', 'Normal Kid', prevM, prevY, 'Monthly Fee', '2000')
+]);
+var cov = w.sandbox.buildFeeCoverage_();
+var mdl = w.sandbox.analyticsTabModel_(cov);
+
+check('the coverage model still spans the whole history',
+      cov.months.length > 24, cov.months.length + ' months');
+check('but the tabs show a window of at most 24 months',
+      mdl.monthNames.length <= 24, mdl.monthNames.length + ' month columns');
+check('  ...so the students grid stays a sensible size',
+      mdl.students.head.length <= 14 + 24,
+      mdl.students.head.length + ' columns');
+check('  ...and it is the RECENT months that are kept',
+      mdl.monthNames[mdl.monthNames.length - 1] === curM + ' ' + curY,
+      mdl.monthNames[mdl.monthNames.length - 1]);
+check('the fees tab is windowed the same way',
+      mdl.fees.rows.length <= 24 + 1, mdl.fees.rows.length + ' rows');
+check('the coverage tab too', mdl.coverage.rows.length <= 24,
+      mdl.coverage.rows.length + ' rows');
+check('the dashboard still opens on a month that exists in the window',
+      mdl.monthNames.indexOf(mdl.defaultMonth) >= 0 || mdl.defaultMonth === '',
+      [mdl.defaultMonth, mdl.monthNames.slice(-3)]);
+
+// The recent month must still be counted correctly after windowing.
+var recent = mdl.students.rows.filter(function (r) { return r[2] === 'Normal Kid'; })[0];
+var prevIdx = mdl.firstMonthCol - 1 + mdl.monthNames.indexOf(prevLabel);
+check('a paid month still reads PAID after windowing',
+      recent[prevIdx] === 'PAID', recent[prevIdx]);
+
 console.log('\n' + (fail === 0 ? 'ALL ' + pass + ' CHECKS PASSED' : pass + ' passed, ' + fail + ' FAILED'));
 process.exit(fail === 0 ? 0 : 1);

@@ -3413,7 +3413,13 @@ function showFeeGaps()      { return report_(feeGapsByStudent()); }
 // without a spreadsheet.
 
 function analyticsTabModel_(cov) {
-  const months = cov.months;
+  // A rolling window, not all of history. The Students tab writes a column per
+  // month, so an unclamped range — one odd date in the sheet is enough to
+  // stretch it to twenty years — meant hundreds of columns across 350 rows,
+  // with conditional formatting and a filter over the lot. That is what turned
+  // a three second refresh into minutes. The Dashboard only ever shows one
+  // month at a time, so the window costs nothing that is looked at.
+  const months = cov.months.slice(-COVERAGE_MONTHS);
   const monthNames = months.map(function (m) { return periodLong_(m.period); });
 
   // ── Students: one row per monthly-fee student, one column per month ──
@@ -3599,6 +3605,14 @@ function refreshAnalytics() {
   mark('read the sheets');
   const model = analyticsTabModel_(cov);
   mark('worked out the tabs');
+  // The size of the biggest grid, so a slow refresh is explainable at a glance.
+  const cells = model.students.rows.length * model.students.head.length;
+  marks.push('students grid ' + model.students.rows.length + ' x ' +
+             model.students.head.length + ' = ' + cells + ' cells');
+  if (cov.months.length > model.monthNames.length) {
+    marks.push('showing the last ' + model.monthNames.length + ' of ' +
+               cov.months.length + ' months');
+  }
   const ss = SpreadsheetApp.getActiveSpreadsheet();
 
   const nStu = model.students.rows.length;
