@@ -612,8 +612,10 @@
           </div>
 
           <div class="field">
-            <label>Contact / WhatsApp</label>
-            <input id="r-phone" class="inp" placeholder="Auto-filled from records" type="tel" />
+            <label>Contact / WhatsApp <span style="font-weight:400;text-transform:none;letter-spacing:0;
+                  font-size:10px;color:#B0A090">(who is paying)</span></label>
+            <input id="r-phone" class="inp" placeholder="Auto-filled from records" type="tel" oninput="updateOtherContacts()" />
+            <div id="r-other-contacts" style="font-size:11px;color:var(--muted);margin-top:4px"></div>
           </div>
 
           <div class="field amount-field">
@@ -1481,6 +1483,7 @@ function renderFeeEditor() {
   });
 
   updateFeeTotal();
+  updateOtherContacts();
 }
 
 // What somebody else on this receipt is paying for the same fee type. Used
@@ -1519,6 +1522,25 @@ function feeGrandTotal() {
     feeLines[n].forEach(function (f) { t += Number(f.amount) || 0; });
   });
   return t;
+}
+
+// The Contact box holds one number — whoever is paying — because that is what
+// the Contact column stores, and what tells two same-named children apart. So
+// when the other students on the receipt have numbers of their own, say so
+// here rather than leaving it looking as though only the first one exists.
+// Every distinct number is printed on the receipt itself.
+function updateOtherContacts() {
+  const el = document.getElementById('r-other-contacts');
+  if (!el) return;
+  const payer = (document.getElementById('r-phone').value || '').replace(/\D/g, '');
+  const others = selectedStudents
+    .filter(function (s) {
+      return s.phone && s.phone.replace(/\D/g, '') !== payer;
+    })
+    .map(function (s) { return s.name + ' · ' + s.phone; });
+  el.textContent = others.length
+    ? 'Also on this receipt — ' + others.join('  |  ') + '  (all of these are printed)'
+    : '';
 }
 
 function updateFeeTotal() {
