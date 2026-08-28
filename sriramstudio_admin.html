@@ -1361,13 +1361,17 @@ document.addEventListener('click', e => {
 // that adding and removing chips keeps whatever has already been typed.
 let feeLines = {};
 
+// A new fee row starts with nothing chosen. Defaulting it to the first type
+// meant every student's card arrived showing "Monthly Fee" already filled in,
+// which read as the fee being added for them automatically the moment it was
+// picked for somebody else. Nothing is chosen until Anjali chooses it.
 function feeTypeOptionsHTML() {
-  return document.getElementById('r-feetype').innerHTML;
+  return '<option value="">— choose a fee —</option>' +
+         document.getElementById('r-feetype').innerHTML;
 }
 
 function defaultFeeType() {
-  const first = document.getElementById('r-feetype').options[0];
-  return first ? first.value : 'Monthly Fee';
+  return '';
 }
 
 // Chips if any were picked, otherwise whatever was typed — a student who is
@@ -1411,7 +1415,7 @@ function renderFeeEditor() {
                  'title="Remove" style="width:34px;flex:none;border-radius:8px;' +
                  'background:var(--petal);color:var(--muted);font-size:17px;line-height:1">&times;</button>' +
              '</div>';
-    }).join('');
+    }).join('') || '<div style="font-size:12px;color:var(--muted);padding:2px 0 6px">No fee added yet.</div>';
 
     const subtotal = feeLines[n].reduce(function (t, f) { return t + (Number(f.amount) || 0); }, 0);
     // Each student's own number, where the roster has one. Two siblings can be
@@ -1469,9 +1473,9 @@ function renderFeeEditor() {
   });
   box.querySelectorAll('.fee-del').forEach(function (b) {
     b.addEventListener('click', function () {
-      const rows = feeLines[names[+b.dataset.s]];
-      rows.splice(+b.dataset.l, 1);
-      if (!rows.length) rows.push({ type: defaultFeeType(), amount: '' });
+      // Removing the last row leaves the card empty. It used to spring a fresh
+      // blank row back, which looked as though the delete had not worked.
+      feeLines[names[+b.dataset.s]].splice(+b.dataset.l, 1);
       renderFeeEditor();
     });
   });
