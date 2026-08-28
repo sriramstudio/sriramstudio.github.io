@@ -3590,8 +3590,15 @@ function writeGrid_(sh, head, rows, startRow) {
 
 function refreshAnalytics() {
   const started = new Date();
+  // Stage timings, so a slow refresh says which part was slow rather than
+  // leaving us guessing.
+  const marks = [];
+  const mark = function (what) { marks.push(what + ' ' + (Date.now() - started.getTime()) + 'ms'); };
+
   const cov = buildFeeCoverage_();
+  mark('read the sheets');
   const model = analyticsTabModel_(cov);
+  mark('worked out the tabs');
   const ss = SpreadsheetApp.getActiveSpreadsheet();
 
   const nStu = model.students.rows.length;
@@ -3615,7 +3622,12 @@ function refreshAnalytics() {
     ]);
     stu.getRange(1, 1, nStu + 1, lastCol).createFilter();
   }
-  stu.autoResizeColumns(1, Math.min(14, lastCol));
+  // Fixed widths, not autoResizeColumns. Autosizing measures every row, which
+  // on 350 students across two dozen columns is most of the refresh's time —
+  // spent making hidden tabs look tidy.
+  [70, 150, 200, 130, 110].forEach(function (px, i) { stu.setColumnWidth(i + 1, px); });
+
+  mark('students tab');
 
   // ── Coverage ──
   const cvr = analyticsSheet_(ss, TAB_COVER);
@@ -3623,21 +3635,10 @@ function refreshAnalytics() {
   if (nCov) {
     cvr.getRange(2, 5, nCov, 1).setNumberFormat('0.0%');
     cvr.getRange(2, 7, nCov, 1).setNumberFormat('"Rs. "#,##0');
-    try {
-      cvr.insertChart(cvr.newChart().asColumnChart()
-        .addRange(cvr.getRange(1, 1, nCov + 1, 1))
-        .addRange(cvr.getRange(1, 5, nCov + 1, 1))
-        .setPosition(2, 10, 0, 0)
-        .setOption('title', 'Fee coverage by month')
-        .setOption('legend', { position: 'none' })
-        .setOption('height', 320).setOption('width', 520)
-        .build());
-    } catch (e) {
-      Logger.log('Chart skipped: ' + e.message);
-    }
+    // The coverage chart used to be drawn here. This tab is hidden now, so it
+    // was never seen — and building a chart is one of the slower things the
+    // refresh can do. Dropped.
   }
-  cvr.autoResizeColumns(1, model.coverage.head.length);
-
   // ── Fees collected, by type and month ──
   const fee = analyticsSheet_(ss, TAB_FEES);
   writeGrid_(fee, model.fees.head, model.fees.rows);
@@ -3647,7 +3648,7 @@ function refreshAnalytics() {
     fee.getRange(2, model.fees.head.length, model.fees.rows.length, 1).setFontWeight('bold');
     fee.getRange(1, 1, model.fees.rows.length + 1, model.fees.head.length).createFilter();
   }
-  fee.autoResizeColumns(1, model.fees.head.length);
+  mark('coverage and fees tabs');
 
   // ── Names and gaps ──
   const nms = analyticsSheet_(ss, TAB_NAMES);
@@ -3655,21 +3656,21 @@ function refreshAnalytics() {
   if (model.names.rows.length) {
     nms.getRange(1, 1, model.names.rows.length + 1, model.names.head.length).createFilter();
   }
-  nms.autoResizeColumns(1, model.names.head.length);
-
   const gps = analyticsSheet_(ss, TAB_GAPS);
   writeGrid_(gps, model.gaps.head, model.gaps.rows);
   if (model.gaps.rows.length) {
     gps.getRange(1, 1, model.gaps.rows.length + 1, model.gaps.head.length).createFilter();
   }
-  gps.autoResizeColumns(1, model.gaps.head.length);
+  mark('names and gaps tabs');
 
   // ── Dashboard, driven by formulas so the picker responds instantly ──
   const dash = analyticsSheet_(ss, TAB_DASH);
   writeDashboard_(dash, model, nStu, nCov, firstCol, lastCol, started);
 
+  mark('dashboard');
   ss.setActiveSheet(dash);
-  setWorkingTabsHidden_(true);   // leave only the Dashboard on the tab strip
+  setWorkingTabsHidden_(true);
+  mark('hid the working tabs');   // leave only the Dashboard on the tab strip
 
   const msg = 'Analytics refreshed ' +
     Utilities.formatDate(started, Session.getScriptTimeZone(), 'dd MMM yyyy HH:mm') + '\n' +
@@ -3682,7 +3683,8 @@ function refreshAnalytics() {
     '\nOnly the Dashboard is left showing. The other five are hidden — the\n' +
     'Dashboard reads them live, so they have to exist, but nobody needs to\n' +
     'look at them. Analytics > Show the working tabs when you do.\n' +
-    'Enrollments, Receipts and Config were not touched.\n';
+    'Enrollments, Receipts and Config were not touched.\n' +
+    '\nTimings: ' + marks.join('  |  ') + '\n';
   Logger.log(msg);
   return msg;
 }
