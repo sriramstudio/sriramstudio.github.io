@@ -617,10 +617,17 @@
           </div>
 
           <div class="field amount-field">
-            <label>Amount Received (₹) <span class="req">*</span></label>
-            <input id="r-amount" class="inp" type="number" placeholder="0" oninput="updateWords()" />
+            <label>Fees Received <span class="req">*</span></label>
+            <div id="fee-editor"></div>
+            <div id="fee-total-bar" style="display:flex;justify-content:space-between;align-items:baseline;
+                 margin-top:10px;padding:10px 12px;border-radius:10px;background:var(--petal);
+                 border:1px solid var(--border)">
+              <span style="font-weight:700;letter-spacing:.04em;font-size:12px;text-transform:uppercase;
+                    color:var(--muted)">Total</span>
+              <span id="fee-total" style="font-weight:900;font-size:19px">₹ 0</span>
+            </div>
             <div class="amount-words" id="amount-words"></div>
-            <div class="err-msg">Enter a valid amount</div>
+            <div class="err-msg">Enter at least one amount</div>
           </div>
 
           <div class="field">
@@ -647,9 +654,11 @@
             </div>
           </div>
 
-          <div class="field">
-            <label>Fee Type <span class="req">*</span></label>
-            <select id="r-feetype" class="inp" onchange="currentFeeType=this.value">
+          <!-- The one list of fee types there is. Hidden: it is cloned into
+               each fee line above. Adding a type here adds it everywhere. -->
+          <div class="field" style="display:none">
+            <label>Fee Type</label>
+            <select id="r-feetype" class="inp">
               <option value="Monthly Fee">Monthly Fee</option>
               <option value="Registration Fee">Registration Fee</option>
               <option value="Uniform / Costume Fee">Uniform / Costume Fee</option>
@@ -784,7 +793,6 @@ let allEnrollments = [];
 let allReceipts    = [];
 let activeFilter   = 'all';
 let currentReceiptData = null;
-let currentFeeType = 'Monthly Fee';
 
 // setFeeType() lived here, left over from when fee types were toggle buttons
 // (ft-existing, ft-new-reg, …). Nothing calls it and those buttons no longer
@@ -1210,13 +1218,16 @@ function renderStudentChips() {
     b.addEventListener('click', function () {
       selectedStudents.splice(parseInt(b.dataset.i), 1);
       renderStudentChips();
+      renderFeeEditor();
     });
   });
 }
 
 function clearSelectedStudents() {
   selectedStudents = [];
+  feeLines = {};
   renderStudentChips();
+  renderFeeEditor();
 }
 
 function addStudentChip(name, phone, program, location) {
@@ -1224,6 +1235,7 @@ function addStudentChip(name, phone, program, location) {
   const dup = selectedStudents.some(function (s) { return studentKey(s.name, s.phone) === key; });
   if (!dup) selectedStudents.push({ name: name, phone: phone || '', program: program || '', location: location || '' });
   renderStudentChips();
+  renderFeeEditor();
 }
 
 function selectStudent(name, phone, program, location) {
@@ -1241,21 +1253,216 @@ document.addEventListener('click', e => {
   if (!e.target.closest('.autocomplete-wrap')) closeSuggestions();
 });
 
-function updateWords() {
-  const n = parseInt(document.getElementById('r-amount').value);
-  document.getElementById('amount-words').textContent = n > 0 ? amountInWords(n) : '';
+// ── Fees, per student ────────────────────────────────────────
+// A family settles everything at once: a monthly fee each for two sisters, a
+// costume fee for one, a late fee for the other. One receipt, one total, but
+// the detail has to be kept — a sibling who only paid a costume fee must not
+// read as having paid for the month.
+//
+// feeLines maps a student's name to their fee rows. It is keyed by name so
+// that adding and removing chips keeps whatever has already been typed.
+let feeLines = {};
+
+function feeTypeOptionsHTML() {
+  return document.getElementById('r-feetype').innerHTML;
+}
+
+function defaultFeeType() {
+  const first = document.getElementById('r-feetype').options[0];
+  return first ? first.value : 'Monthly Fee';
+}
+
+// Chips if any were picked, otherwise whatever was typed — a student who is
+// not in the database can still be given a receipt.
+function receiptStudentNames() {
+  if (selectedStudents.length) return selectedStudents.map(function (s) { return s.name; });
+  const typed = document.getElementById('r-name').value.trim();
+  return typed ? [typed] : [];
+}
+
+function renderFeeEditor() {
+  const box = document.getElementById('fee-editor');
+  if (!box) return;
+  const names = receiptStudentNames();
+
+  // Forget anyone no longer on the receipt; start anyone new with one row.
+  Object.keys(feeLines).forEach(function (n) {
+    if (names.indexOf(n) < 0) delete feeLines[n];
+  });
+  names.forEach(function (n) {
+    if (!feeLines[n]) feeLines[n] = [{ type: defaultFeeType(), amount: '' }];
+  });
+
+  if (!names.length) {
+    box.innerHTML = '<div style="padding:12px;border:1px dashed var(--border);border-radius:10px;' +
+                    'color:var(--muted);font-size:13px">Pick a student first.</div>';
+    updateFeeTotal();
+    return;
+  }
+
+  const many = names.length > 1;
+  box.innerHTML = names.map(function (n, si) {
+    const lines = feeLines[n].map(function (f, li) {
+      return '<div style="display:flex;gap:6px;margin-bottom:6px">' +
+               '<select class="inp fee-type" data-s="' + si + '" data-l="' + li + '" ' +
+                 'style="flex:1;min-width:0">' + feeTypeOptionsHTML() + '</select>' +
+               '<input class="inp fee-amt" data-s="' + si + '" data-l="' + li + '" type="number" ' +
+                 'inputmode="numeric" placeholder="0" value="' + f.amount + '" ' +
+                 'style="width:92px;flex:none" />' +
+               '<button type="button" class="fee-del" data-s="' + si + '" data-l="' + li + '" ' +
+                 'title="Remove" style="width:34px;flex:none;border-radius:8px;' +
+                 'background:var(--petal);color:var(--muted);font-size:17px;line-height:1">&times;</button>' +
+             '</div>';
+    }).join('');
+
+    const subtotal = feeLines[n].reduce(function (t, f) { return t + (Number(f.amount) || 0); }, 0);
+    return '<div style="border:1px solid var(--border);border-radius:10px;padding:10px 10px 8px;' +
+             'margin-bottom:8px;background:var(--white)">' +
+             (many ? '<div style="font-weight:700;font-size:13px;margin-bottom:8px">' + n + '</div>' : '') +
+             lines +
+             '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:2px">' +
+               '<button type="button" class="fee-add" data-s="' + si + '" ' +
+                 'style="background:none;color:var(--saffron);font-size:12px;font-weight:700;padding:2px 0">' +
+                 '+ add a fee</button>' +
+               (many ? '<span style="font-size:12px;color:var(--muted)">Subtotal ₹ ' +
+                       subtotal.toLocaleString('en-IN') + '</span>' : '') +
+             '</div>' +
+           '</div>';
+  }).join('');
+
+  // Selects cannot carry their value through innerHTML; set them afterwards.
+  box.querySelectorAll('.fee-type').forEach(function (sel) {
+    sel.value = feeLines[names[+sel.dataset.s]][+sel.dataset.l].type;
+    sel.addEventListener('change', function () {
+      feeLines[names[+sel.dataset.s]][+sel.dataset.l].type = sel.value;
+      autofillOthers(names, +sel.dataset.s, +sel.dataset.l);
+      renderFeeEditor();
+    });
+  });
+  box.querySelectorAll('.fee-amt').forEach(function (inp) {
+    inp.addEventListener('input', function () {
+      feeLines[names[+inp.dataset.s]][+inp.dataset.l].amount = inp.value;
+      autofillOthers(names, +inp.dataset.s, +inp.dataset.l);
+      updateFeeTotal();
+      refreshSubtotals(names);
+    });
+  });
+  box.querySelectorAll('.fee-add').forEach(function (b) {
+    b.addEventListener('click', function () {
+      feeLines[names[+b.dataset.s]].push({ type: defaultFeeType(), amount: '' });
+      renderFeeEditor();
+    });
+  });
+  box.querySelectorAll('.fee-del').forEach(function (b) {
+    b.addEventListener('click', function () {
+      const rows = feeLines[names[+b.dataset.s]];
+      rows.splice(+b.dataset.l, 1);
+      if (!rows.length) rows.push({ type: defaultFeeType(), amount: '' });
+      renderFeeEditor();
+    });
+  });
+
+  updateFeeTotal();
+}
+
+// Siblings usually pay the same. Copy this fee to every other student who has
+// no amount against that type yet — never over anything already typed.
+function autofillOthers(names, si, li) {
+  const src = feeLines[names[si]][li];
+  if (!src.type || !(Number(src.amount) > 0)) return;
+  names.forEach(function (n, i) {
+    if (i === si) return;
+    const rows  = feeLines[n];
+    const match = rows.filter(function (f) { return f.type === src.type; })[0];
+    if (match) {
+      if (match.amount === '' || match.amount === null) match.amount = src.amount;
+      return;                                   // already has a figure: leave it
+    }
+    const blank = rows.filter(function (f) { return f.amount === '' && !f.touched; })[0];
+    if (blank) { blank.type = src.type; blank.amount = src.amount; }
+    else rows.push({ type: src.type, amount: src.amount });
+  });
+  refreshAmountInputs(names);
+}
+
+function refreshAmountInputs(names) {
+  document.querySelectorAll('#fee-editor .fee-amt').forEach(function (inp) {
+    const f = feeLines[names[+inp.dataset.s]][+inp.dataset.l];
+    if (f && inp.value !== String(f.amount)) inp.value = f.amount;
+  });
+  document.querySelectorAll('#fee-editor .fee-type').forEach(function (sel) {
+    const f = feeLines[names[+sel.dataset.s]][+sel.dataset.l];
+    if (f && sel.value !== f.type) sel.value = f.type;
+  });
+}
+
+function refreshSubtotals(names) {
+  // Cheap enough to redraw only the numbers rather than the whole editor,
+  // which would steal focus from the box being typed in.
+  const cards = document.querySelectorAll('#fee-editor > div');
+  names.forEach(function (n, i) {
+    const span = cards[i] && cards[i].querySelector('span');
+    if (!span) return;
+    const t = feeLines[n].reduce(function (a, f) { return a + (Number(f.amount) || 0); }, 0);
+    span.textContent = 'Subtotal ₹ ' + t.toLocaleString('en-IN');
+  });
+}
+
+function feeGrandTotal() {
+  let t = 0;
+  Object.keys(feeLines).forEach(function (n) {
+    feeLines[n].forEach(function (f) { t += Number(f.amount) || 0; });
+  });
+  return t;
+}
+
+function updateFeeTotal() {
+  const t = feeGrandTotal();
+  const el = document.getElementById('fee-total');
+  if (el) el.textContent = '₹ ' + t.toLocaleString('en-IN');
+  document.getElementById('amount-words').textContent = t > 0 ? amountInWords(t) : '';
+}
+
+// What goes to the backend: only students with at least one real amount.
+function buildFeeSplit(names) {
+  return names.map(function (n) {
+    return {
+      student: n,
+      fees: (feeLines[n] || []).filter(function (f) {
+        return f.type && Number(f.amount) > 0;
+      }).map(function (f) { return { type: f.type, amount: Number(f.amount) }; })
+    };
+  }).filter(function (s) { return s.fees.length; });
+}
+
+function feeTypeSummary(split) {
+  const seen = [];
+  split.forEach(function (s) {
+    s.fees.forEach(function (f) { if (seen.indexOf(f.type) < 0) seen.push(f.type); });
+  });
+  return seen.join(' + ');
 }
 
 async function generateReceipt() {
   // Chips if any were picked; otherwise fall back to whatever was typed, so a
   // student who is not in the database can still be given a receipt.
-  const typed  = document.getElementById('r-name').value.trim();
-  const names  = selectedStudents.length ? selectedStudents.map(function (s) { return s.name; })
-                                         : (typed ? [typed] : []);
-  const name   = names.join(' & ');
-  const amount = document.getElementById('r-amount').value;
-  if (!names.length)                      { markFieldErr('r-name');   toast('Select at least one student', 'error'); return; }
-  if (!amount || parseInt(amount) <= 0)  { markFieldErr('r-amount'); toast('Enter a valid amount', 'error');  return; }
+  const names = receiptStudentNames();
+  const name  = names.join(' & ');
+  if (!names.length) { markFieldErr('r-name'); toast('Select at least one student', 'error'); return; }
+
+  const split  = buildFeeSplit(names);
+  const amount = feeGrandTotal();
+  if (!split.length || amount <= 0) {
+    toast('Enter at least one fee amount', 'error');
+    return;
+  }
+  const missing = names.filter(function (n) {
+    return !split.some(function (s) { return s.student === n; });
+  });
+  if (missing.length) {
+    toast('No amount entered for ' + missing.join(' and '), 'error');
+    return;
+  }
 
   const btn = document.getElementById('btn-gen-receipt');
   btn.textContent = 'Generating…'; btn.disabled = true;
@@ -1265,11 +1472,12 @@ async function generateReceipt() {
     students:     names,
     guardianPhone: document.getElementById('r-phone').value,
     amount,
+    split,
     month:   document.getElementById('r-month').value,
     year:    document.getElementById('r-year').value,
     payMode,
     upiRef:   payMode === 'UPI' ? document.getElementById('r-upiref').value : '',
-    feeType:  document.getElementById('r-feetype').value || 'Monthly Fee',
+    feeType:  feeTypeSummary(split) || 'Monthly Fee',
     dateReceived: document.getElementById('r-daterecv').value || (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; })(),
     note:     (document.getElementById('r-note').value || '').trim(),
     program: '',
@@ -1302,9 +1510,19 @@ function renderReceipt(d) {
     ? `<div class="pay-badge" style="background:var(--blue-bg)"><div class="icon">📲</div><div class="label" style="color:var(--blue)">UPI</div></div>`
     : `<div class="pay-badge" style="background:var(--succ-bg)"><div class="icon">💵</div><div class="label" style="color:var(--success)">CASH</div></div>`;
 
+  // With several students, one line each showing what that child came to —
+  // the parent sees who they paid for without a fee-by-fee matrix. A single
+  // student keeps the row it has always had.
+  const perStudent = (d.split && d.split.length > 1)
+    ? d.split.map(function (s) {
+        const t = s.fees.reduce(function (a, f) { return a + Number(f.amount); }, 0);
+        return [s.student, `<span class="bold">₹ ${t.toLocaleString('en-IN')}</span>`];
+      })
+    : [[(d.students && d.students.length > 1) ? 'Students' : 'Student Name',
+        `<span class="bold">${d.studentName}</span>`]];
+
   const rows = [
-    [(d.students && d.students.length > 1) ? 'Students' : 'Student Name',
-     `<span class="bold">${d.studentName}</span>`],
+    ...perStudent,
     ['Fee Type',     d.feeType || 'Monthly Fee'],
     ['Date Received', d.dateReceived ? new Date(d.dateReceived + 'T00:00:00').toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' }) : ''],
     ['Fee Period',   `${d.month} ${d.year}`],
@@ -1365,12 +1583,11 @@ function showReceiptForm() {
   document.getElementById('r-name').value   = '';
   clearSelectedStudents();
   document.getElementById('r-phone').value  = '';
-  document.getElementById('r-amount').value = '';
+
   document.getElementById('r-upiref').value = '';
   document.getElementById('r-note').value   = '';
-  const ft = document.getElementById('r-feetype');
-  if (ft) ft.value = 'Monthly Fee';
-  currentFeeType = 'Monthly Fee';
+  feeLines = {};
+  renderFeeEditor();
   document.getElementById('amount-words').textContent = '';
   setCurrentMonthYear(); // also resets r-daterecv to today
 }
@@ -1406,7 +1623,12 @@ async function copyReceiptText() {
     `An Academy for Performing Arts\n\n` +
     `Receipt No    : ${d.receiptNum}\n` +
     `Date Issued   : ${d.issuedAt}\n\n` +
-    `${(d.students && d.students.length > 1) ? 'Students     ' : 'Student      '} : ${d.studentName}\n` +
+    ((d.split && d.split.length > 1)
+      ? d.split.map(function (s) {
+          const t = s.fees.reduce(function (a, f) { return a + Number(f.amount); }, 0);
+          return `${(s.student + '              ').substring(0, 14)}: Rs. ${t.toLocaleString('en-IN')}`;
+        }).join('\n') + '\n'
+      : `${(d.students && d.students.length > 1) ? 'Students     ' : 'Student      '} : ${d.studentName}\n`) +
     `Fee Type      : ${d.feeType || 'Monthly Fee'}\n` +
     `Date Received : ${d.dateReceived || d.issuedAt}\n` +
     `Fee Period    : ${d.month} ${d.year}\n` +

@@ -1245,9 +1245,21 @@ var opts = (adminHtml.match(/<select id="r-feetype"[\s\S]*?<\/select>/) || [''])
   .forEach(function (t) {
     check('the panel offers "' + t + '"', opts.indexOf('>' + t + '<') >= 0, opts);
   });
-check('no fee type name is hardcoded in Code.gs',
-      fs.readFileSync(SRC, 'utf8').indexOf('Uniform / Costume Fee') < 0,
-      'Code.gs now enumerates fee types - it should only test for "monthly"');
+// Code.gs must not branch on particular fee types — it only ever asks whether
+// one starts with "Monthly". Comments may name them by way of example, so
+// strip those before looking. 'Monthly Fee' is exempt: it is the documented
+// fallback when a receipt arrives without a fee type at all.
+var gsCode = fs.readFileSync(SRC, 'utf8')
+  .replace(/\/\*[\s\S]*?\*\//g, ' ')
+  .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
+// 'Workshop' and 'Other' are left out: they are also Enrollments *Type*
+// values, which Code.gs legitimately does name, and the words collide.
+['Registration Fee', 'Uniform / Costume Fee', 'Late Fee']
+  .forEach(function (t) {
+    check('Code.gs does not branch on "' + t + '"',
+          gsCode.indexOf("'" + t + "'") < 0 && gsCode.indexOf('"' + t + '"') < 0,
+          'Code.gs now enumerates fee types - it should only test for "monthly"');
+  });
 
 console.log('');
 console.log('--- receipts column alignment ---');
@@ -1297,6 +1309,127 @@ check('a column added at the end is not flagged',
       okExtra.indexOf('ALIGNED') >= 0, 'a trailing column was called a mismatch');
 check('  ...but is listed so it is visible',
       okExtra.indexOf('Fee Breakdown') >= 0, 'trailing column not shown');
+
+console.log('');
+console.log('--- one receipt, several students, several fee types ---');
+w = freshWorld('1234');
+var SPLIT = [
+  { student: 'Riya Sen', fees: [{ type: 'Monthly Fee', amount: 2000 },
+                                { type: 'Uniform / Costume Fee', amount: 800 }] },
+  { student: 'Diya Sen', fees: [{ type: 'Uniform / Costume Fee', amount: 800 },
+                                { type: 'Late Fee', amount: 100 }] }
+];
+var text = w.sandbox.serialiseFeeSplit_(SPLIT);
+check('the split writes as one readable line',
+      text === 'Riya Sen: Monthly Fee 2000; Uniform / Costume Fee 800 | ' +
+               'Diya Sen: Uniform / Costume Fee 800; Late Fee 100', text);
+check('  ...and reads back to the same thing',
+      JSON.stringify(w.sandbox.parseFeeSplit_(text)) === JSON.stringify(SPLIT),
+      w.sandbox.parseFeeSplit_(text));
+check('a fee type containing a slash survives the round trip',
+      w.sandbox.parseFeeSplit_(text)[0].fees[1].type === 'Uniform / Costume Fee',
+      w.sandbox.parseFeeSplit_(text)[0].fees[1]);
+check('the total is the sum of every line',
+      w.sandbox.feeSplitTotal_(SPLIT) === 3700, w.sandbox.feeSplitTotal_(SPLIT));
+check('per-type totals add across students',
+      w.sandbox.feeTotalsByType_(SPLIT)['Uniform / Costume Fee'] === 1600,
+      w.sandbox.feeTotalsByType_(SPLIT));
+check('only the sibling with a monthly fee is a monthly payer',
+      JSON.stringify(Object.keys(w.sandbox.monthlyPayersIn_(SPLIT))) ===
+      JSON.stringify(['riya sen']), w.sandbox.monthlyPayersIn_(SPLIT));
+check('an empty split reads as nothing rather than throwing',
+      w.sandbox.parseFeeSplit_('').length === 0 &&
+      w.sandbox.parseFeeSplit_(null).length === 0, 'threw or returned junk');
+check('garbage in the column is ignored, not half-parsed',
+      w.sandbox.parseFeeSplit_('who knows what this is').length === 0,
+      w.sandbox.parseFeeSplit_('who knows what this is'));
+
+console.log('');
+console.log('--- what the sheet ends up holding ---');
+w = freshWorld('1234');
+w.sheets.Receipts = makeSheet([rhd]);
+var res = call(w, { action: 'addReceipt', pin: '1234', data: enc({
+  studentName: 'Riya Sen & Diya Sen', students: ['Riya Sen', 'Diya Sen'],
+  guardianPhone: '9830012345', month: 'August', year: '2026',
+  payMode: 'UPI', upiRef: '4477xx', dateReceived: '24 Aug 2026', split: SPLIT }) });
+check('the receipt is created', res.success === true && !!res.receiptNo, res);
+
+var hd = w.sheets.Receipts._data[0], rw = w.sheets.Receipts._data[1];
+var col = function (name) {
+  for (var i = 0; i < hd.length; i++) if (String(hd[i]).indexOf(name) === 0) return rw[i];
+  return '(no column)';
+};
+check('the total is computed from the split, not taken on trust',
+      col('Amount') === 3700, col('Amount'));
+check('Fee Type summarises what was paid',
+      col('Fee Type') === 'Monthly Fee + Uniform / Costume Fee + Late Fee',
+      col('Fee Type'));
+check('the Fee Split column holds the per-student detail',
+      col('Fee Split') === text, col('Fee Split'));
+check('a per-type column is created and totalled',
+      col('Uniform / Costume Fee ₹') === 1600, col('Uniform / Costume Fee ₹'));
+check('  ...for each type on the receipt',
+      col('Monthly Fee ₹') === 2000 && col('Late Fee ₹') === 100,
+      [col('Monthly Fee ₹'), col('Late Fee ₹')]);
+check('the original thirteen columns have not moved',
+      hd.slice(0, 13).join(',') === rhd.join(','), hd.slice(0, 13));
+check('  ...so the new ones sit after them',
+      hd.length === 17 && String(hd[13]).indexOf('Monthly Fee') === 0, hd);
+check('the alignment audit still passes',
+      w.sandbox.auditReceiptColumns().indexOf('ALIGNED') >= 0, 'audit broke');
+
+console.log('');
+console.log('--- the sibling who only paid a costume fee ---');
+w.sheets.Enrollments = makeSheet([dh,
+  cRow('SR-1', 'Riya Sen', backLabel),
+  cRow('SR-2', 'Diya Sen', backLabel)
+]);
+// Same receipt, but booked against last month so the month is a closed one.
+w.sheets.Receipts = makeSheet([rhd.concat(['Monthly Fee ₹','Uniform / Costume Fee ₹','Late Fee ₹','Fee Split']),
+  ['SS-2026-0801', '01 ' + prevM.substring(0,3) + ' ' + prevY, 'Riya Sen & Diya Sen',
+   '9830012345', 3700, prevM, prevY, 'UPI', '4477xx',
+   'Monthly Fee + Uniform / Costume Fee + Late Fee', '', '', 'Riya Sen | Diya Sen',
+   2000, 1600, 100, text]
+]);
+var cm = w.sandbox.feeCoverageForMonth(prevLabel);
+var cmPaid = cm.substring(cm.indexOf('PAID ('));
+check('the sister who paid a monthly fee is covered',
+      cmPaid.indexOf('Riya Sen') >= 0, 'see log');
+check('the sister who only paid a costume and late fee is NOT',
+      cmPaid.indexOf('Diya Sen') < 0, 'a costume fee covered the month');
+check('  ...and she is listed as owing the month',
+      cm.indexOf('Diya Sen') > cm.indexOf('NO RECEIPT FOR'),
+      cm.split('\n').filter(function (l) { return l.indexOf('Diya') >= 0; }));
+check('the money is still counted in full',
+      cm.indexOf('Rs. 3,700') >= 0,
+      cm.split('\n').filter(function (l) { return l.indexOf('Collected') >= 0; }));
+
+console.log('');
+console.log('--- receipts without a split are unaffected ---');
+w2 = freshWorld('1234');
+w2.sheets.Enrollments = makeSheet([dh, cRow('SR-1', 'Old Kid', backLabel)]);
+w2.sheets.Receipts = makeSheet([rhd,
+  cRcpt('SS-9', 'Old Kid', 'Old Kid', prevM, prevY, 'Monthly Fee', '2000')
+]);
+var old = w2.sandbox.feeCoverageForMonth(prevLabel);
+check('an older receipt with no Fee Split still covers the month',
+      old.substring(old.indexOf('PAID (')).indexOf('Old Kid') >= 0, 'see log');
+
+// A different division of the same total is a different payment, not a retry.
+w2 = freshWorld('1234');
+var base = { studentName: 'A & B', students: ['A Kid', 'B Kid'],
+             month: 'August', year: '2026' };
+base.split = [{ student: 'A Kid', fees: [{ type: 'Monthly Fee', amount: 2000 }] },
+              { student: 'B Kid', fees: [{ type: 'Monthly Fee', amount: 1000 }] }];
+var r1 = call(w2, { action: 'addReceipt', pin: '1234', data: enc(base) });
+base.split = [{ student: 'A Kid', fees: [{ type: 'Monthly Fee', amount: 1000 }] },
+              { student: 'B Kid', fees: [{ type: 'Monthly Fee', amount: 2000 }] }];
+var r2 = call(w2, { action: 'addReceipt', pin: '1234', data: enc(base) });
+check('the same total split differently is not swallowed as a retry',
+      r1.receiptNo !== r2.receiptNo && !r2.duplicate, [r1, r2]);
+var same = call(w2, { action: 'addReceipt', pin: '1234', data: enc(base) });
+check('  ...but an identical resend still is',
+      same.receiptNo === r2.receiptNo && same.duplicate === true, same);
 
 console.log('\n' + (fail === 0 ? 'ALL ' + pass + ' CHECKS PASSED' : pass + ' passed, ' + fail + ' FAILED'));
 process.exit(fail === 0 ? 0 : 1);

@@ -524,14 +524,116 @@ function ensureReceiptStudentsColumn_() {
 // Generate again. Six consecutive receipt numbers for one student at one
 // timestamp is what that looks like in the data. Remembering each receipt
 // briefly makes a retry return the original instead of minting another.
+// ─── One receipt, several students, several fee types ─────────
+// A family often settles everything at once: two sisters, a monthly fee each,
+// a costume fee for one and a late fee for the other. Anjali wants one receipt
+// with one total, but the detail has to survive into the sheet — without it,
+// a sibling who only paid a costume fee would be marked up for the month.
+//
+// The detail is stored in one 'Fee Split' column, in a format that reads
+// plainly in the sheet and parses without ambiguity:
+//
+//   Riya Sen: Monthly Fee 2000; Uniform / Costume Fee 800 | Diya Sen: Late Fee 100
+//
+// '|' separates students (as the Students column already does), ';' separates
+// that student's fees, and the amount is the trailing number. Fee type names
+// may contain '/' and spaces, which is why the amount is read from the end.
+// No fee type is named anywhere in this file: the panel's dropdown stays the
+// only list there is.
+
+function serialiseFeeSplit_(split) {
+  if (!split || !split.length) return '';
+  return split.map(function (s) {
+    const fees = (s.fees || []).filter(function (f) { return Number(f.amount) > 0; });
+    if (!fees.length) return '';
+    return s.student + ': ' + fees.map(function (f) {
+      return f.type + ' ' + Math.round(Number(f.amount));
+    }).join('; ');
+  }).filter(Boolean).join(' | ');
+}
+
+function parseFeeSplit_(text) {
+  const raw = (text === null || text === undefined) ? '' : text.toString().trim();
+  if (!raw) return [];
+  const out = [];
+  raw.split('|').forEach(function (chunk) {
+    const at = chunk.indexOf(':');
+    if (at < 0) return;
+    const student = chunk.substring(0, at).trim();
+    if (!student) return;
+    const fees = [];
+    chunk.substring(at + 1).split(';').forEach(function (bit) {
+      const m = bit.trim().match(/^(.*?)\s+([0-9]+(?:\.[0-9]+)?)$/);
+      if (!m) return;
+      const type = m[1].trim();
+      if (type) fees.push({ type: type, amount: parseFloat(m[2]) });
+    });
+    if (fees.length) out.push({ student: student, fees: fees });
+  });
+  return out;
+}
+
+// Every fee type the split mentions, in the order they first appear — this is
+// what the Fee Type column shows for a mixed receipt.
+function feeTypesIn_(split) {
+  const seen = {}, out = [];
+  (split || []).forEach(function (s) {
+    (s.fees || []).forEach(function (f) {
+      const t = (f.type || '').toString().trim();
+      if (!t || seen[t]) return;
+      seen[t] = true;
+      out.push(t);
+    });
+  });
+  return out;
+}
+
+function feeTotalsByType_(split) {
+  const totals = {};
+  (split || []).forEach(function (s) {
+    (s.fees || []).forEach(function (f) {
+      const t = (f.type || '').toString().trim();
+      const n = Number(f.amount) || 0;
+      if (!t || n <= 0) return;
+      totals[t] = (totals[t] || 0) + n;
+    });
+  });
+  return totals;
+}
+
+function feeSplitTotal_(split) {
+  let n = 0;
+  (split || []).forEach(function (s) {
+    (s.fees || []).forEach(function (f) { n += Number(f.amount) || 0; });
+  });
+  return n;
+}
+
+// Which students on this receipt actually paid a month's tuition. A costume or
+// late fee names a student without settling their month.
+function monthlyPayersIn_(split) {
+  const out = {};
+  (split || []).forEach(function (s) {
+    const paysMonthly = (s.fees || []).some(function (f) {
+      return normName_(f.type).indexOf('monthly') === 0 && Number(f.amount) > 0;
+    });
+    if (paysMonthly) out[normName_(s.student)] = true;
+  });
+  return out;
+}
+
 const RECEIPT_DUP_WINDOW_SEC = 15 * 60;
 
 function receiptFingerprint_(d) {
   const who = (d.students && d.students.length)
     ? d.students.map(normName_).sort().join('+')
     : normName_(d.studentName);
+  // The split has to be part of this. Two receipts for the same siblings, same
+  // month and same total but a different division between them are different
+  // payments, and treating the second as a retry would lose it.
+  const split = normName_(serialiseFeeSplit_(d.split));
   const fp = 'rcpt|' + who + '|' + (d.month || '') + (d.year || '') +
-             '|' + (d.amount || '') + '|' + (d.feeType || '');
+             '|' + (d.amount || '') + '|' + (d.feeType || '') + '|' + split;
   return fp.substring(0, 240);
 }
 
@@ -565,6 +667,14 @@ function addReceipt(d) {
   const receiptNo = 'SS-' + new Date().getFullYear() + '-' + String(seq).padStart(4, '0');
   const issuedAt  = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd MMM yyyy');
 
+  // A split receipt states its own total and its own fee types; recomputing
+  // them here means the sheet can never disagree with the detail beside it.
+  const split = (d.split && d.split.length) ? d.split : null;
+  if (split) {
+    d.amount  = feeSplitTotal_(split);
+    d.feeType = feeTypesIn_(split).join(' + ') || d.feeType;
+  }
+
   sheet.appendRow([
     receiptNo, issuedAt,
     d.studentName   || '',
@@ -579,6 +689,22 @@ function addReceipt(d) {
     d.note          || '',
     (d.students && d.students.length) ? d.students.join(' | ') : (d.studentName || '')
   ]);
+
+  // The split and its per-type totals go in columns of their own, created on
+  // first use and always at the END of the sheet, so the thirteen columns a
+  // receipt has always used never move. Written by header name, not position.
+  if (split) {
+    const row     = sheet.getLastRow();
+    const totals  = feeTotalsByType_(split);
+    const put     = {};
+    Object.keys(totals).forEach(function (t) { put[t + ' ₹'] = totals[t]; });
+    put['Fee Split'] = serialiseFeeSplit_(split);
+
+    Object.keys(put).forEach(function (header) {
+      const at = ensureColumn_('Receipts', header);   // 0-based
+      sheet.getRange(row, at + 1).setValue(put[header]);
+    });
+  }
 
   cache.put(fp, receiptNo + '||' + issuedAt, RECEIPT_DUP_WINDOW_SEC);
   return { success: true, receiptNo, issuedAt };
@@ -2377,21 +2503,35 @@ function buildFeeCoverage_() {
   const rCon  = rHead.indexOf('Contact');
   const rRecd = rHead.indexOf('Date Received');
   const rIss  = rHead.indexOf('Issued At');
+  const rSplit= rHead.indexOf('Fee Split');
 
   const receipts = [], unresolved = [], ambiguous = [], resolvedNames = {};
   const periodStats = {};
   let monthlyCount = 0, otherTypeCount = 0, noPeriod = 0, periodGuessed = 0;
-  let multiMonth = 0, vagueMonth = 0;
+  let multiMonth = 0, vagueMonth = 0, splitCount = 0;
 
   for (let i = 1; i < rData.length; i++) {
     const row = rData[i];
     if (rNo >= 0 && !norm(row[rNo])) continue;
 
-    // Registration, workshop and one-off fees are money, but they are not a
-    // month's tuition and must not make a month look covered.
+    // Registration, workshop, costume and late fees are money, but they are
+    // not a month's tuition and must not make a month look covered.
+    //
+    // A receipt with a Fee Split is judged per student: one sister paying a
+    // monthly fee and a costume fee, the other paying only a costume fee,
+    // covers the first for the month and not the second. Older receipts have
+    // no split, so they keep the original whole-receipt rule.
     const feeType = rType >= 0 ? norm(row[rType]) : '';
-    if (feeType && normName_(feeType).indexOf('monthly') !== 0) { otherTypeCount++; continue; }
+    const split   = rSplit >= 0 ? parseFeeSplit_(row[rSplit]) : [];
+    const payers  = split.length ? monthlyPayersIn_(split) : null;
+
+    if (payers) {
+      if (!Object.keys(payers).length) { otherTypeCount++; continue; }
+    } else if (feeType && normName_(feeType).indexOf('monthly') !== 0) {
+      otherTypeCount++; continue;
+    }
     monthlyCount++;
+    if (payers) splitCount++;
 
     // Fee Month/Fee Year is the truth. Where it is blank a note saying "fee
     // for August" is the next best thing, and the date received the last
@@ -2517,6 +2657,10 @@ function buildFeeCoverage_() {
       rec.matched.forEach(function (m) {
         const s = m.student;
         s.receipts++;
+        // With a split, only the students whose share included a monthly fee
+        // are covered for the month. The others are on the receipt for a
+        // costume or a late fee and still owe their tuition.
+        if (payers && !payers[normName_(m.from)] && !payers[s.key]) return;
         span.periods.forEach(function (p) {
           s.paid[p] = (s.paid[p] || 0) + 1;
           if (s.firstPaid < 0 || p < s.firstPaid) s.firstPaid = p;
@@ -2602,7 +2746,7 @@ function buildFeeCoverage_() {
     counts: {
       monthly: monthlyCount, otherType: otherTypeCount,
       noPeriod: noPeriod, periodGuessed: periodGuessed,
-      multiMonth: multiMonth, vagueMonth: vagueMonth,
+      multiMonth: multiMonth, vagueMonth: vagueMonth, split: splitCount,
       roster: students.length,
       billable: students.filter(function (s) { return s.billable; }).length,
       active: students.filter(function (s) { return s.billable && !s.left; }).length
