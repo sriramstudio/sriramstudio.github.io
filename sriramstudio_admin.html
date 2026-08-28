@@ -1333,7 +1333,11 @@ function clearSelectedStudents() {
 function addStudentChip(name, phone, program, location) {
   const key = studentKey(name, phone);
   const dup = selectedStudents.some(function (s) { return studentKey(s.name, s.phone) === key; });
-  if (!dup) selectedStudents.push({ name: name, phone: phone || '', program: program || '', location: location || '' });
+  // Every chip gets an id of its own. Two different children really can share
+  // a name — there are two Krisha Agarwals on this roster — so the fee lines
+  // must hang off something unique, never off the name.
+  if (!dup) selectedStudents.push({ uid: 'c' + (++chipSeq), name: name, phone: phone || '',
+                                    program: program || '', location: location || '' });
   renderStudentChips();
   renderFeeEditor();
 }
@@ -1362,6 +1366,7 @@ document.addEventListener('click', e => {
 // feeLines maps a student's name to their fee rows. It is keyed by name so
 // that adding and removing chips keeps whatever has already been typed.
 let feeLines = {};
+let chipSeq  = 0;
 
 // A new fee row starts with nothing chosen. Defaulting it to the first type
 // meant every student's card arrived showing "Monthly Fee" already filled in,
@@ -1377,17 +1382,28 @@ function defaultFeeType() {
 }
 
 // Chips if any were picked, otherwise whatever was typed — a student who is
-// not in the database can still be given a receipt.
-function receiptStudentNames() {
-  if (selectedStudents.length) return selectedStudents.map(function (s) { return s.name; });
+// not in the database can still be given a receipt. Each carries its own id,
+// because names repeat and fee lines must not be shared between two children
+// who happen to be called the same thing.
+function receiptStudentList() {
+  if (selectedStudents.length) {
+    return selectedStudents.map(function (s) {
+      return { uid: s.uid, name: s.name, phone: s.phone || '' };
+    });
+  }
   const typed = document.getElementById('r-name').value.trim();
-  return typed ? [typed] : [];
+  return typed ? [{ uid: 'typed', name: typed, phone: '' }] : [];
+}
+
+function receiptStudentNames() {
+  return receiptStudentList().map(function (s) { return s.name; });
 }
 
 function renderFeeEditor() {
   const box = document.getElementById('fee-editor');
   if (!box) return;
-  const names = receiptStudentNames();
+  const people = receiptStudentList();
+  const names  = people.map(function (p) { return p.uid; });   // keyed by id, not name
 
   // Forget anyone no longer on the receipt; start anyone new with one row.
   Object.keys(feeLines).forEach(function (n) {
@@ -1422,14 +1438,14 @@ function renderFeeEditor() {
     const subtotal = feeLines[n].reduce(function (t, f) { return t + (Number(f.amount) || 0); }, 0);
     // Each student's own number, where the roster has one. Two siblings can be
     // registered under different guardians, and Anjali needs to see both.
-    const chip  = selectedStudents.filter(function (s) { return s.name === n; })[0];
-    const phone = chip && chip.phone ? chip.phone : '';
+    const person = people[si];
+    const phone  = person.phone || '';
 
     return '<div style="border:1px solid var(--border);border-radius:10px;padding:10px 10px 8px;' +
              'margin-bottom:8px;background:var(--white)">' +
              (many ? '<div style="display:flex;justify-content:space-between;align-items:baseline;' +
                      'gap:8px;margin-bottom:8px">' +
-                       '<span style="font-weight:700;font-size:13px">' + n + '</span>' +
+                       '<span style="font-weight:700;font-size:13px">' + person.name + '</span>' +
                        (phone ? '<span style="font-size:11px;color:var(--muted);white-space:nowrap">📞 ' +
                                 phone + '</span>' : '') +
                      '</div>' : '') +
@@ -1516,10 +1532,12 @@ function refreshSubtotals(names) {
   });
 }
 
+// Only the students actually on the receipt, so a chip removed mid-edit
+// cannot leave its amount silently inside the total.
 function feeGrandTotal() {
   let t = 0;
-  Object.keys(feeLines).forEach(function (n) {
-    feeLines[n].forEach(function (f) { t += Number(f.amount) || 0; });
+  receiptStudentList().forEach(function (p) {
+    (feeLines[p.uid] || []).forEach(function (f) { t += Number(f.amount) || 0; });
   });
   return t;
 }
@@ -1551,11 +1569,11 @@ function updateFeeTotal() {
 }
 
 // What goes to the backend: only students with at least one real amount.
-function buildFeeSplit(names) {
-  return names.map(function (n) {
+function buildFeeSplit() {
+  return receiptStudentList().map(function (p) {
     return {
-      student: n,
-      fees: (feeLines[n] || []).filter(function (f) {
+      student: p.name,
+      fees: (feeLines[p.uid] || []).filter(function (f) {
         return f.type && Number(f.amount) > 0;
       }).map(function (f) { return { type: f.type, amount: Number(f.amount) }; })
     };
@@ -1591,7 +1609,7 @@ async function generateReceipt() {
   const name  = names.join(' & ');
   if (!names.length) { markFieldErr('r-name'); toast('Select at least one student', 'error'); return; }
 
-  const split  = buildFeeSplit(names);
+  const split  = buildFeeSplit();
   const amount = feeGrandTotal();
   if (!split.length || amount <= 0) {
     toast('Enter at least one fee amount', 'error');
