@@ -447,7 +447,14 @@ The sister who paid a monthly fee is covered for the month; the one who paid
 only a costume fee is not, and stays on the collections list. Without it, one
 receipt would mark both siblings paid and the second would silently disappear.
 
-**Two months on one receipt.** Families often settle two months together. The
+**Two months on one receipt.** Anjali can tick a span on the receipt form — a
+first month and an "up to" month — and it is recorded in a **`Fee Months`**
+column. Where that column is filled it is the answer, and the note is not
+consulted: stated beats inferred. `Fee Month` / `Fee Year` still hold the FIRST
+month, so every older report reads the same.
+
+For receipts issued before that existed, the months are still read from the
+note. Families often settle two months together. The
 `Fee Month` column holds only one month, so the second is read from the **note**
 — `July and August fees`, `2 months fee - Jul & Aug`. Both months then count as
 paid for every child on that receipt. `December and January` correctly rolls

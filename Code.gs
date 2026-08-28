@@ -693,12 +693,17 @@ function addReceipt(d) {
   // The split and its per-type totals go in columns of their own, created on
   // first use and always at the END of the sheet, so the thirteen columns a
   // receipt has always used never move. Written by header name, not position.
-  if (split) {
+  const spansMonths = !!(d.feeMonths && d.feeMonths.length > 1);
+  if (split || spansMonths) {
     const row     = sheet.getLastRow();
-    const totals  = feeTotalsByType_(split);
+    const totals  = split ? feeTotalsByType_(split) : {};
     const put     = {};
     Object.keys(totals).forEach(function (t) { put[t + ' ₹'] = totals[t]; });
-    put['Fee Split'] = serialiseFeeSplit_(split);
+    if (split) put['Fee Split'] = serialiseFeeSplit_(split);
+    // Fee Month holds the first month only. When a receipt settles several,
+    // the whole span is recorded here rather than left to be guessed from the
+    // note — stated beats inferred.
+    if (spansMonths) put['Fee Months'] = d.feeMonths.join(' | ');
 
     Object.keys(put).forEach(function (header) {
       const at = ensureColumn_('Receipts', header);   // 0-based
@@ -2194,7 +2199,25 @@ function noteYearFor_(mi, primaryPeriod, explicitYear) {
 // them. Extra months come from the note, and only when it names two or more —
 // a note naming a single different month is a mis-keyed Fee Month, which
 // findDuplicateReceipts already reports, and crediting both would be wrong.
-function receiptPeriods_(primaryPeriod, note) {
+// `stated` is the Fee Months column: the months Anjali actually ticked when
+// issuing the receipt. Where it exists it is the answer, and the note is not
+// consulted at all — stated beats inferred.
+function receiptPeriods_(primaryPeriod, note, stated) {
+  const listed = (stated === null || stated === undefined) ? '' : stated.toString().trim();
+  if (listed) {
+    const periods = [];
+    listed.split('|').forEach(function (bit) {
+      const p = parsePeriod_(bit.trim());
+      if (p >= 0 && periods.indexOf(p) < 0) periods.push(p);
+    });
+    if (periods.length) {
+      if (primaryPeriod >= 0 && periods.indexOf(primaryPeriod) < 0) periods.push(primaryPeriod);
+      periods.sort(function (a, b) { return a - b; });
+      return { periods: periods, multi: periods.length > 1, vague: false,
+               ignored: [], stated: true };
+    }
+  }
+
   const named = noteMonthsAll_(note);
   const result = { periods: [], multi: false, vague: false, ignored: [] };
   if (primaryPeriod >= 0) result.periods.push(primaryPeriod);
@@ -2504,6 +2527,7 @@ function buildFeeCoverage_() {
   const rRecd = rHead.indexOf('Date Received');
   const rIss  = rHead.indexOf('Issued At');
   const rSplit= rHead.indexOf('Fee Split');
+  const rMons = rHead.indexOf('Fee Months');
 
   const receipts = [], unresolved = [], ambiguous = [], resolvedNames = {};
   const periodStats = {};
@@ -2585,7 +2609,7 @@ function buildFeeCoverage_() {
     // One receipt can settle two months at once. The note is the only place
     // that is recorded.
     const noteText = rNote >= 0 ? norm(row[rNote]) : '';
-    const span = receiptPeriods_(period, noteText);
+    const span = receiptPeriods_(period, noteText, rMons >= 0 ? row[rMons] : '');
     if (span.multi) multiMonth++;
     if (span.vague) vagueMonth++;
 

@@ -1495,5 +1495,64 @@ check('  ...and the monthly payer still is covered',
 check('receipts skipped for coverage are still counted as skipped',
       cv.counts.otherType === 1, cv.counts.otherType);
 
+console.log('');
+console.log('--- months stated on the receipt beat months guessed from a note ---');
+w = freshWorld('1234');
+var rpm = w.sandbox.receiptPeriods_;
+var JUL = P('July', 2026), AUG = P('August', 2026), DEC = P('December', 2026);
+
+check('a stated span covers every month in it',
+      rpm(JUL, '', 'July 2026 | August 2026').periods.join(',') === [JUL, AUG].join(','),
+      rpm(JUL, '', 'July 2026 | August 2026').periods);
+check('  ...and is flagged as spanning months',
+      rpm(JUL, '', 'July 2026 | August 2026').multi === true, 'not flagged');
+check('  ...and says so, rather than being an inference',
+      rpm(JUL, '', 'July 2026 | August 2026').stated === true, 'not marked as stated');
+
+check('a stated span wins over a note that disagrees',
+      rpm(JUL, 'Fee for July + late fee of June', 'July 2026 | August 2026')
+        .periods.join(',') === [JUL, AUG].join(','),
+      rpm(JUL, 'Fee for July + late fee of June', 'July 2026 | August 2026').periods);
+check('  ...and nothing is held back when the months are stated',
+      rpm(JUL, 'Fee for July + late fee of June', 'July 2026 | August 2026')
+        .ignored.length === 0, 'a qualifier was applied to a stated span');
+
+check('a stated span crossing a year is kept as written',
+      rpm(DEC, '', 'December 2026 | January 2027').periods.join(',') ===
+      [DEC, P('January', 2027)].join(','),
+      rpm(DEC, '', 'December 2026 | January 2027').periods);
+
+check('a single stated month is not called a span',
+      rpm(AUG, '', 'August 2026').multi === false,
+      rpm(AUG, '', 'August 2026'));
+
+check('an empty Fee Months falls back to reading the note',
+      rpm(JUL, 'Fee for July & August', '').periods.join(',') === [JUL, AUG].join(','),
+      rpm(JUL, 'Fee for July & August', '').periods);
+check('  ...and so does an unreadable one',
+      rpm(JUL, 'Fee for July & August', 'nonsense').periods.join(',') === [JUL, AUG].join(','),
+      rpm(JUL, 'Fee for July & August', 'nonsense').periods);
+check('the note-only path still holds back a late fee month',
+      rpm(JUL, 'Fee for July + late fee of June', '').periods.length === 1,
+      rpm(JUL, 'Fee for July + late fee of June', ''));
+
+console.log('');
+console.log('--- a stated span in the coverage numbers ---');
+w.sheets.Enrollments = makeSheet([dh, cRow('SR-1', 'Span Kid', backLabel)]);
+w.sheets.Receipts = makeSheet([rhd.concat(['Fee Months']),
+  ['SS-1', '01 ' + backM.substring(0,3) + ' ' + backY, 'Span Kid', '9', 4000,
+   backM, backY, 'Cash', '', 'Monthly Fee', '', '', 'Span Kid',
+   backLabel + ' | ' + prevLabel]
+]);
+var sp1 = w.sandbox.feeCoverageForMonth(backLabel);
+var sp2 = w.sandbox.feeCoverageForMonth(prevLabel);
+check('the month it was filed under is covered',
+      sp1.substring(sp1.indexOf('PAID (')).indexOf('Span Kid') >= 0, 'see log');
+check('and so is the second month it states',
+      sp2.substring(sp2.indexOf('PAID (')).indexOf('Span Kid') >= 0, 'see log');
+check('  ...with the receipt still booked to the first month only',
+      sp2.indexOf('Receipts booked to this month    0') >= 0,
+      sp2.split('\n').filter(function (l) { return l.indexOf('Receipts booked') >= 0; }));
+
 console.log('\n' + (fail === 0 ? 'ALL ' + pass + ' CHECKS PASSED' : pass + ' passed, ' + fail + ' FAILED'));
 process.exit(fail === 0 ? 0 : 1);
