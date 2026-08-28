@@ -163,10 +163,24 @@ This is stored in the Google Sheet, NOT in code:
 
 ### ➤ 5E. Changing FEE TYPES (receipt dropdown)
 
-- [ ] **`sriramstudio_admin.html`** — find `id="r-feetype"` (~line 640s), edit the `<option>` list
+- [ ] **`sriramstudio_admin.html`** — find `id="r-feetype"` (~line 650s), edit the `<option>` list
+- [ ] Update the list below, and Section 11A if the change affects fee coverage
 - [ ] Upload admin file to GitHub
 
-Current fee types: Monthly Fee, Registration Fee, Workshop, Other
+Current fee types: **Monthly Fee**, **Registration Fee**,
+**Uniform / Costume Fee**, **Late Fee**, **Workshop**, **Other**
+
+The dropdown is the only list — nothing else in the code enumerates fee types,
+so adding one is a single edit. `Code.gs` never hardcodes the names; it asks
+only whether a fee type *starts with* "Monthly".
+
+> **What that means for the analytics.** Only `Monthly Fee` (or a blank fee
+> type, for older receipts) makes a month count as paid. Registration, uniform,
+> late and workshop fees are money, but they are not a month's tuition, so they
+> are counted in revenue and deliberately excluded from fee coverage. A late fee
+> in particular must never mark a month paid — the late fee is the penalty, the
+> tuition is separate. If you ever add a fee type that *should* cover a month,
+> its name must begin with "Monthly", or `buildFeeCoverage_` needs changing.
 
 ---
 

@@ -1202,5 +1202,52 @@ check('both months read PAID in the students grid',
       [row[gm.firstMonthCol - 1 + cols.indexOf(backLabel)],
        row[gm.firstMonthCol - 1 + cols.indexOf(prevLabel)]]);
 
+console.log('');
+console.log('--- fee types that must not cover a month ---');
+// The panel offers six fee types. Only Monthly Fee is a month's tuition; the
+// rest are real money but must never make a month read as paid. A Late Fee is
+// the penalty for paying late, not the payment.
+w = freshWorld('1234');
+w.sheets.Enrollments = makeSheet([dh,
+  cRow('SR-1', 'Uniform Only',  backLabel),
+  cRow('SR-2', 'Late Fee Only', backLabel),
+  cRow('SR-3', 'Registered',    backLabel),
+  cRow('SR-4', 'Actually Paid', backLabel)
+]);
+w.sheets.Receipts = makeSheet([rhd,
+  cRcpt('SS-1', 'Uniform Only',  'Uniform Only',  prevM, prevY, 'Uniform / Costume Fee', '1200'),
+  cRcpt('SS-2', 'Late Fee Only', 'Late Fee Only', prevM, prevY, 'Late Fee',              '100'),
+  cRcpt('SS-3', 'Registered',    'Registered',    prevM, prevY, 'Registration Fee',      '500'),
+  cRcpt('SS-4', 'Actually Paid', 'Actually Paid', prevM, prevY, 'Monthly Fee',           '2000')
+]);
+var ft = w.sandbox.feeCoverageForMonth(prevLabel);
+var ftPaid = ft.substring(ft.indexOf('PAID ('));
+
+check('a uniform / costume fee does not cover the month',
+      ftPaid.indexOf('Uniform Only') < 0, 'uniform fee counted as tuition');
+check('a late fee does not cover the month',
+      ftPaid.indexOf('Late Fee Only') < 0, 'late fee counted as tuition');
+check('a registration fee does not cover the month',
+      ftPaid.indexOf('Registered') < 0, 'registration fee counted as tuition');
+check('a monthly fee does',
+      ftPaid.indexOf('Actually Paid') >= 0, 'monthly fee not counted');
+check('so three of the four students read as unpaid',
+      ft.indexOf('No receipt                       3') >= 0,
+      ft.split('\n').filter(function (l) { return l.indexOf('No receipt') >= 0; }));
+check('  ...and the non-tuition receipts are counted as skipped, not lost',
+      w.sandbox.buildFeeCoverage_().counts.otherType === 3,
+      w.sandbox.buildFeeCoverage_().counts.otherType);
+
+// The dropdown is the only list of fee types anywhere.
+var adminHtml = fs.readFileSync('sriramstudio_admin.html', 'utf8');
+var opts = (adminHtml.match(/<select id="r-feetype"[\s\S]*?<\/select>/) || [''])[0];
+['Monthly Fee', 'Registration Fee', 'Uniform / Costume Fee', 'Late Fee', 'Workshop', 'Other']
+  .forEach(function (t) {
+    check('the panel offers "' + t + '"', opts.indexOf('>' + t + '<') >= 0, opts);
+  });
+check('no fee type name is hardcoded in Code.gs',
+      fs.readFileSync(SRC, 'utf8').indexOf('Uniform / Costume Fee') < 0,
+      'Code.gs now enumerates fee types - it should only test for "monthly"');
+
 console.log('\n' + (fail === 0 ? 'ALL ' + pass + ' CHECKS PASSED' : pass + ' passed, ' + fail + ' FAILED'));
 process.exit(fail === 0 ? 0 : 1);

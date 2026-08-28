@@ -652,6 +652,8 @@
             <select id="r-feetype" class="inp" onchange="currentFeeType=this.value">
               <option value="Monthly Fee">Monthly Fee</option>
               <option value="Registration Fee">Registration Fee</option>
+              <option value="Uniform / Costume Fee">Uniform / Costume Fee</option>
+              <option value="Late Fee">Late Fee</option>
               <option value="Workshop">Workshop</option>
               <option value="Other">Other</option>
             </select>
@@ -784,16 +786,10 @@ let activeFilter   = 'all';
 let currentReceiptData = null;
 let currentFeeType = 'Monthly Fee';
 
-function setFeeType(type) {
-  currentFeeType = type;
-  ['existing','new-reg','re-reg','workshop'].forEach(id => {
-    const btn = document.getElementById('ft-' + id);
-    if (btn) btn.classList.remove('active');
-  });
-  const map = { 'Monthly Fee': 'existing', 'New Registration': 'new-reg', 'Re-Registration': 're-reg', 'Workshop': 'workshop' };
-  const btn = document.getElementById('ft-' + map[type]);
-  if (btn) btn.classList.add('active');
-}
+// setFeeType() lived here, left over from when fee types were toggle buttons
+// (ft-existing, ft-new-reg, …). Nothing calls it and those buttons no longer
+// exist; it also carried a stale list of fee-type names, which is a trap for
+// anyone adding a type. The dropdown #r-feetype is the only list that matters.
 let searchTimeout  = null;
 
 // ═══════════════════════════════════════════════════
