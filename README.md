@@ -264,6 +264,43 @@ breaks `register.html`. `deploy.cmd` only ever uses `clasp redeploy`.
 
 ---
 
+## 7A. If something goes wrong — rolling back
+
+Every working state is tagged before a risky change, so going back is one
+command. Nothing here rewrites history or deletes anything.
+
+```
+.\rollback.cmd            put Code.gs and the admin panel back
+.\rollback.cmd --list     show which states you can go back to
+```
+
+It restores the two files into your folder, runs the tests against them, and
+stops. **It does not push.** It then prints the two commands that make the
+restore live — `.\deploy.cmd` for the backend, `git push` for the admin panel.
+
+Changed your mind before making it live?
+`git checkout HEAD -- Code.gs sriramstudio_admin.html` puts the newer code
+straight back.
+
+**The Google Sheet is not touched by any of this.** No rollback deletes a
+column or a row. Where a change adds columns they go at the *end*, so leaving
+them behind after a rollback is harmless — the older code simply ignores them.
+
+**Before any change that touches receipts**, take a copy of the data too:
+right-click the `Receipts` tab → **Duplicate**. That is the real safety net and
+it takes two seconds.
+
+To roll back the *deployed* web app rather than the code, see the end of
+Section 7: `clasp.cmd redeploy <same-id> -V <older version number>`.
+
+**Tags so far:**
+
+| Tag | State |
+|-----|-------|
+| `pre-fee-split` | Everything working before the per-student, per-fee-type receipt split. |
+
+---
+
 ## 8. Google Sheet Structure (reference)
 
 **Enrollments tab columns:**
