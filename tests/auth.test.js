@@ -1249,5 +1249,54 @@ check('no fee type name is hardcoded in Code.gs',
       fs.readFileSync(SRC, 'utf8').indexOf('Uniform / Costume Fee') < 0,
       'Code.gs now enumerates fee types - it should only test for "monthly"');
 
+console.log('');
+console.log('--- receipts column alignment ---');
+w = freshWorld('1234');
+w.sheets.Receipts = makeSheet([rhd]);
+var al = w.sandbox.auditReceiptColumns();
+check('the current Receipts headers are reported as aligned',
+      al.indexOf('ALIGNED') >= 0, al.split('\n').filter(function (l) {
+        return l.indexOf('WRONG') >= 0; }));
+
+// A receipt written now must land under the headings the audit claims.
+call(w, { action: 'addReceipt', pin: '1234', data: enc({
+  studentName: 'Align Kid', students: ['Align Kid'], guardianPhone: '9000000001',
+  amount: '2000', month: 'August', year: '2026', payMode: 'Cash', upiRef: '',
+  feeType: 'Uniform / Costume Fee', dateReceived: '01 Aug 2026', note: 'costume' }) });
+var hdr = w.sheets.Receipts._data[0];
+var row = w.sheets.Receipts._data[1];
+var at = function (name) {
+  for (var i = 0; i < hdr.length; i++) if (String(hdr[i]).indexOf(name) === 0) return row[i];
+  return '(no such column)';
+};
+check('the fee type lands under Fee Type',
+      at('Fee Type') === 'Uniform / Costume Fee', at('Fee Type'));
+check('the amount lands under Amount', at('Amount') === '2000', at('Amount'));
+check('the note lands under Note', at('Note') === 'costume', at('Note'));
+check('the student lands under Student Name', at('Student Name') === 'Align Kid',
+      at('Student Name'));
+
+// Now move a column, as deleting or inserting one in the sheet would.
+var shuffled = rhd.slice();
+shuffled.splice(3, 0, 'Somebody Inserted This');   // a new column before Contact
+w.sheets.Receipts = makeSheet([shuffled]);
+var bad = w.sandbox.auditReceiptColumns();
+check('an inserted column is caught',
+      bad.indexOf('COLUMN(S) OUT OF PLACE') >= 0,
+      bad.split('\n').filter(function (l) { return l.indexOf('OUT OF PLACE') >= 0; }));
+check('  ...and it says not to issue receipts until it is fixed',
+      bad.indexOf('Do NOT issue receipts') >= 0, 'no warning given');
+check('  ...and says receipts already issued are unaffected',
+      bad.indexOf('already issued are unaffected') >= 0, 'no reassurance given');
+
+// A column added at the END is the safe way, and must not be flagged.
+var appended = rhd.concat(['Fee Breakdown']);
+w.sheets.Receipts = makeSheet([appended]);
+var okExtra = w.sandbox.auditReceiptColumns();
+check('a column added at the end is not flagged',
+      okExtra.indexOf('ALIGNED') >= 0, 'a trailing column was called a mismatch');
+check('  ...but is listed so it is visible',
+      okExtra.indexOf('Fee Breakdown') >= 0, 'trailing column not shown');
+
 console.log('\n' + (fail === 0 ? 'ALL ' + pass + ' CHECKS PASSED' : pass + ' passed, ' + fail + ' FAILED'));
 process.exit(fail === 0 ? 0 : 1);

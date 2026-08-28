@@ -732,6 +732,69 @@ function colLetter_(n) {
   return out;
 }
 
+// ─── Receipts column alignment (read-only, editor only) ───────
+// addReceipt writes a receipt with a positional appendRow: thirteen values in
+// a fixed order. That is fine while the Receipts headers are in that same
+// order, and silently wrong the moment a column is inserted, deleted or moved
+// — new receipts would file the fee type, or the amount, under the wrong
+// heading. The same pattern misaligned 18 enrolment rows once already.
+//
+// This reports whether the sheet still matches. It writes nothing. Run it
+// after any change to the Receipts tab's columns.
+
+// The order addReceipt's appendRow uses. Headers are matched on prefix, so
+// 'Amount' matches 'Amount (₹)'.
+const RECEIPT_WRITE_ORDER = [
+  'Receipt No', 'Issued At', 'Student Name', 'Contact', 'Amount',
+  'Fee Month', 'Fee Year', 'Payment Mode', 'UPI Reference', 'Fee Type',
+  'Date Received', 'Note', 'Students'
+];
+
+function auditReceiptColumns() {
+  const norm = function (v) { return (v === null || v === undefined) ? '' : v.toString().trim(); };
+  const sheet = getSheet('Receipts');
+  const width = Math.max(1, sheet.getLastColumn());
+  const head  = sheet.getRange(1, 1, 1, width).getValues()[0].map(norm);
+
+  let out = 'RECEIPTS COLUMN ALIGNMENT\n=========================\n';
+  out += 'Where a new receipt puts each value, against what the sheet says.\n\n';
+  out += '  ' + pad_('col', 5) + pad_('a new receipt writes', 22) +
+         pad_('the sheet header is', 26) + 'ok?\n';
+
+  let bad = 0;
+  for (let i = 0; i < RECEIPT_WRITE_ORDER.length; i++) {
+    const want = RECEIPT_WRITE_ORDER[i];
+    const got  = head[i] === undefined ? '' : head[i];
+    const ok   = got.indexOf(want) === 0;
+    if (!ok) bad++;
+    out += '  ' + pad_(colLetter_(i + 1), 5) + pad_(want, 22) +
+           pad_(got || '(missing)', 26) + (ok ? 'yes' : '<-- WRONG') + '\n';
+  }
+
+  const extra = head.slice(RECEIPT_WRITE_ORDER.length).filter(function (h) { return h; });
+  if (extra.length) {
+    out += '\nColumns after the ones a receipt writes (left alone, safe):\n';
+    extra.forEach(function (h, i) {
+      out += '  ' + pad_(colLetter_(RECEIPT_WRITE_ORDER.length + i + 1), 5) + h + '\n';
+    });
+  }
+
+  out += '\nReceipts on the sheet : ' + Math.max(0, sheet.getLastRow() - 1) + '\n';
+  if (bad === 0) {
+    out += 'ALIGNED. Every value a new receipt writes lands under the right\n';
+    out += 'heading. Run this again after any change to the Receipts columns.\n';
+  } else {
+    out += bad + ' COLUMN(S) OUT OF PLACE.\n';
+    out += 'Do NOT issue receipts until this is fixed: they would be written\n';
+    out += 'under the wrong headings. Put the columns back in the order above,\n';
+    out += 'or add new columns at the END only, where nothing shifts.\n';
+    out += 'Receipts already issued are unaffected.\n';
+  }
+  out += '\nReport only. Nothing was changed.\n';
+  Logger.log(out);
+  return out;
+}
+
 function auditEnrollments() {
   const sheet = getSheet('Enrollments');
   const data  = sheet.getDataRange().getValues();

@@ -337,6 +337,7 @@ click Run, then read the **Execution log**.
 | `addStatusColumn` | Creates the `Status`, `Left On` and `Review` columns if missing. |
 | `auditEnrollments` | Reports what each column actually holds, and flags values sitting under the wrong header. Writes nothing. |
 | `auditEnrollmentRow` | Dumps single rows header-by-header. Pass a row number, or nothing for a spread. Writes nothing. |
+| `auditReceiptColumns` | Checks the `Receipts` headers still match the order a new receipt is written in. **Run after any change to the Receipts columns.** Writes nothing. |
 | `previewColumnRepair` | Shows which rows are misaligned and exactly what would move. Writes nothing. |
 | `repairColumnAlignment` | Realigns them. Backs the tab up first and refuses if any value would be lost. |
 | `dropEmptyOverflowColumns` | Removes unheadered columns past `Notes`, but only once they are empty. |
