@@ -326,6 +326,20 @@ about which to pick.
 **REVIEW** badge. Check it, then clear the cell. A genuinely new student who
 happens to share a name is never blocked, only flagged.
 
+**Receipts tab columns** — the first thirteen, in the order a receipt is
+written: Receipt No · Issued At · Student Name · Contact · Amount (₹) ·
+Fee Month · Fee Year · Payment Mode · UPI Reference · Fee Type · Date Received ·
+Note · Students
+
+Then, added at the end as they are first needed: **`Fee Split`** and one
+**`<fee type> ₹`** column per fee type. Section 11A explains what they hold.
+
+> **Never insert, delete or reorder the first thirteen.** A receipt is written
+> by position, so a moved column would file the amount or the fee type under
+> the wrong heading — silently, and only for *new* receipts. **Add columns at
+> the END only.** Run `auditReceiptColumns` after any change to this tab; it
+> says plainly whether new receipts will still land correctly.
+
 **Config tab keys:**
 - `pin` — admin panel PIN (default 1234)
 - `receipt_seq` — next receipt number (change to reset numbering)
@@ -407,6 +421,31 @@ in `Left On` if they have left. Workshop rows and applications nobody acted on
 are not expected to pay a monthly fee — unless a monthly receipt names them, in
 which case they are. Only `Monthly Fee` receipts (and receipts with the fee
 type left blank) cover a month; registration and workshop fees do not.
+
+**Several students and several fee types on one receipt.** A family settles
+everything at once — a monthly fee each for two sisters, a costume fee for one,
+a late fee for the other. Anjali enters one card per student with as many fee
+lines as she needs; the total is computed from the lines and cannot disagree
+with them. **Typing a fee for one student copies it to the others**, because
+siblings usually pay the same, and it only ever fills a blank — anything
+already typed stands.
+
+The sheet keeps this in two places. `Fee Split` holds the per-student detail:
+
+```
+Riya Sen: Monthly Fee 2000; Uniform / Costume Fee 800 | Diya Sen: Late Fee 100
+```
+
+and a column per fee type (`Monthly Fee ₹`, `Uniform / Costume Fee ₹` …) holds
+that type's total across the receipt, so a column can simply be summed. Both
+are created on first use and always **at the end**, so the thirteen columns a
+receipt has always used never move. Receipts issued before this leave them
+blank and keep the older whole-receipt rule.
+
+**Why the split matters:** fee coverage judges a split receipt *per student*.
+The sister who paid a monthly fee is covered for the month; the one who paid
+only a costume fee is not, and stays on the collections list. Without it, one
+receipt would mark both siblings paid and the second would silently disappear.
 
 **Two months on one receipt.** Families often settle two months together. The
 `Fee Month` column holds only one month, so the second is read from the **note**
@@ -502,9 +541,10 @@ Sheet once for it to show up.
 
 | Tab | What it holds |
 |-----|---------------|
-| `Analytics Dashboard` | Pick a month; the counts and the unpaid list update instantly. |
+| `Analytics Dashboard` | Pick a month; the counts, the fee-type breakdown and the unpaid list update instantly. |
 | `Analytics Coverage` | One row per month — due, paid, unpaid, collected — and a chart. |
 | `Analytics Students` | One row per student, one column per month, PAID/UNPAID colour-coded. Filter it. |
+| `Analytics Fees` | What was collected each month, split by fee type, with a Total column. The fee types are read from the receipts, so a new one appears here by itself. |
 | `Analytics Names` | Every name printed on a receipt and the row it was credited to. Anything needing a decision sorts to the top. |
 | `Analytics Gaps` | Students missing at least one month, worst first, with phone numbers. |
 

@@ -1431,5 +1431,69 @@ var same = call(w2, { action: 'addReceipt', pin: '1234', data: enc(base) });
 check('  ...but an identical resend still is',
       same.receiptNo === r2.receiptNo && same.duplicate === true, same);
 
+console.log('');
+console.log('--- the fees tab ---');
+w = freshWorld('1234');
+w.sheets.Enrollments = makeSheet([dh, cRow('SR-1', 'Riya Sen', backLabel),
+                                      cRow('SR-2', 'Diya Sen', backLabel)]);
+var splitTxt = 'Riya Sen: Monthly Fee 2000; Uniform / Costume Fee 800 | ' +
+               'Diya Sen: Uniform / Costume Fee 800; Late Fee 100';
+w.sheets.Receipts = makeSheet([
+  rhd.concat(['Fee Split']),
+  ['SS-1', '01 ' + prevM.substring(0,3) + ' ' + prevY, 'Riya Sen & Diya Sen', '98300',
+   3700, prevM, prevY, 'UPI', '', 'Monthly Fee + Uniform / Costume Fee + Late Fee',
+   '', '', 'Riya Sen | Diya Sen', splitTxt],
+  // A plain registration fee, no split - its money must still be counted.
+  ['SS-2', '01 ' + prevM.substring(0,3) + ' ' + prevY, 'Riya Sen', '98300',
+   500, prevM, prevY, 'Cash', '', 'Registration Fee', '', '', 'Riya Sen', '']
+]);
+var cv = w.sandbox.buildFeeCoverage_();
+var fm = w.sandbox.analyticsTabModel_(cv);
+
+check('every fee type on the receipts becomes a column',
+      ['Monthly Fee','Uniform / Costume Fee','Late Fee','Registration Fee']
+        .every(function (t) { return fm.fees.head.indexOf(t) > 0; }), fm.fees.head);
+check('the last column is the row total', fm.fees.head[fm.fees.head.length - 1] === 'Total',
+      fm.fees.head);
+
+var prevRow = fm.fees.rows.filter(function (r) { return r[0] === prevLabel; })[0];
+var colOf = function (name) { return fm.fees.head.indexOf(name); };
+check('a split receipt is broken up by type',
+      prevRow[colOf('Monthly Fee')] === 2000 &&
+      prevRow[colOf('Uniform / Costume Fee')] === 1600 &&
+      prevRow[colOf('Late Fee')] === 100,
+      [prevRow[colOf('Monthly Fee')], prevRow[colOf('Uniform / Costume Fee')],
+       prevRow[colOf('Late Fee')]]);
+check('a non-tuition receipt still contributes its money',
+      prevRow[colOf('Registration Fee')] === 500, prevRow[colOf('Registration Fee')]);
+check('the row total is every fee type added up',
+      prevRow[prevRow.length - 1] === 4200, prevRow[prevRow.length - 1]);
+check('  ...which is the full amount of both receipts',
+      prevRow[prevRow.length - 1] === 3700 + 500, prevRow[prevRow.length - 1]);
+
+check('a month with no receipts reads zero, not blank',
+      fm.fees.rows.every(function (r) {
+        return r.slice(1).every(function (v) { return typeof v === 'number'; }); }),
+      'a non-numeric cell would break the column total');
+
+var prev = w.sandbox.previewAnalyticsRefresh();
+check('the fees tab is listed among the tabs a refresh would build',
+      prev.indexOf('Analytics Fees') >= 0,
+      prev.split('\n').filter(function (l) { return l.indexOf('Analytics') >= 0; }));
+check('  ...and the preview still writes nothing',
+      prev.indexOf('Nothing has been written') >= 0, 'preview lost its promise');
+check('  ...and still reports the data tabs as untouched',
+      prev.indexOf('read only, never written') >= 0, prev);
+
+// Counting revenue must not have changed which receipts cover a month.
+var cmf = w.sandbox.feeCoverageForMonth(prevLabel);
+check('the registration fee still does not cover the month',
+      cmf.substring(cmf.indexOf('PAID (')).indexOf('Diya Sen') < 0,
+      'coverage changed when revenue counting was added');
+check('  ...and the monthly payer still is covered',
+      cmf.substring(cmf.indexOf('PAID (')).indexOf('Riya Sen') >= 0, 'see log');
+check('receipts skipped for coverage are still counted as skipped',
+      cv.counts.otherType === 1, cv.counts.otherType);
+
 console.log('\n' + (fail === 0 ? 'ALL ' + pass + ' CHECKS PASSED' : pass + ' passed, ' + fail + ' FAILED'));
 process.exit(fail === 0 ? 0 : 1);

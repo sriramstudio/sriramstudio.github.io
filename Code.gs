@@ -2509,6 +2509,7 @@ function buildFeeCoverage_() {
   const periodStats = {};
   let monthlyCount = 0, otherTypeCount = 0, noPeriod = 0, periodGuessed = 0;
   let multiMonth = 0, vagueMonth = 0, splitCount = 0;
+  const feeRevenue = {}, feeTypesSeen = [];
 
   for (let i = 1; i < rData.length; i++) {
     const row = rData[i];
@@ -2525,18 +2526,12 @@ function buildFeeCoverage_() {
     const split   = rSplit >= 0 ? parseFeeSplit_(row[rSplit]) : [];
     const payers  = split.length ? monthlyPayersIn_(split) : null;
 
-    if (payers) {
-      if (!Object.keys(payers).length) { otherTypeCount++; continue; }
-    } else if (feeType && normName_(feeType).indexOf('monthly') !== 0) {
-      otherTypeCount++; continue;
-    }
-    monthlyCount++;
-    if (payers) splitCount++;
-
     // Fee Month/Fee Year is the truth. Where it is blank a note saying "fee
     // for August" is the next best thing, and the date received the last
     // resort — both are counted and flagged rather than trusted silently.
-    let period = -1, periodSource = 'fee month';
+    // Worked out for every receipt, because the revenue tally below wants a
+    // month for the registration and costume fees too, not only the tuition.
+    let period = -1, periodSource = 'fee month', guessed = false;
     const mi = monthIndexLoose_(rMon >= 0 ? norm(row[rMon]) : '');
     const yr = parseInt(rYr >= 0 ? norm(row[rYr]) : '', 10);
     if (mi >= 0 && yr) {
@@ -2547,15 +2542,45 @@ function buildFeeCoverage_() {
       const fallbackYear = yr || (fallback >= 0 ? Math.floor(fallback / 12) : 0);
       const noted = monthIndexLoose_(noteMonth_(rNote >= 0 ? norm(row[rNote]) : ''));
       if (mi >= 0 && fallbackYear) {
-        period = fallbackYear * 12 + mi; periodSource = 'year from date'; periodGuessed++;
+        period = fallbackYear * 12 + mi; periodSource = 'year from date'; guessed = true;
       } else if (noted >= 0 && fallbackYear) {
-        period = fallbackYear * 12 + noted; periodSource = 'note'; periodGuessed++;
+        period = fallbackYear * 12 + noted; periodSource = 'note'; guessed = true;
       } else if (fallback >= 0) {
-        period = fallback; periodSource = 'date received'; periodGuessed++;
+        period = fallback; periodSource = 'date received'; guessed = true;
       } else {
-        noPeriod++; periodSource = 'none';
+        periodSource = 'none';
       }
     }
+
+    // Every rupee, by fee type and by month — tuition, costume fees and all.
+    // A split receipt states its own division; anything older is all of one
+    // type. No fee type is named here: they come out of the data.
+    const rowAmount = parseFloat(norm(rAmt >= 0 ? row[rAmt] : '').replace(/[^0-9.]/g, '')) || 0;
+    const byType = split.length ? feeTotalsByType_(split)
+                                : (function () { const o = {}; o[feeType || '(not stated)'] = rowAmount; return o; })();
+    Object.keys(byType).forEach(function (t) {
+      if (feeTypesSeen.indexOf(t) < 0) feeTypesSeen.push(t);
+      const key = period >= 0 ? period : 'none';
+      feeRevenue[key] = feeRevenue[key] || {};
+      feeRevenue[key][t] = (feeRevenue[key][t] || 0) + byType[t];
+    });
+
+    // Registration, workshop, costume and late fees are money, but they are
+    // not a month's tuition and must not make a month look covered.
+    //
+    // A receipt with a Fee Split is judged per student: one sister paying a
+    // monthly fee and a costume fee, the other paying only a costume fee,
+    // covers the first for the month and not the second. Older receipts have
+    // no split, so they keep the original whole-receipt rule.
+    if (payers) {
+      if (!Object.keys(payers).length) { otherTypeCount++; continue; }
+    } else if (feeType && normName_(feeType).indexOf('monthly') !== 0) {
+      otherTypeCount++; continue;
+    }
+    monthlyCount++;
+    if (payers) splitCount++;
+    if (guessed) periodGuessed++;
+    if (period < 0) noPeriod++;
 
     // One receipt can settle two months at once. The note is the only place
     // that is recorded.
@@ -2742,6 +2767,7 @@ function buildFeeCoverage_() {
     students: students, byKey: byKey, months: months, receipts: receipts,
     unresolved: unresolved, ambiguousReceipts: ambiguous, resolvedNames: resolvedNames,
     config: config, warnings: warnings, gaps: gaps,
+    feeRevenue: feeRevenue, feeTypes: feeTypesSeen,
     firstPeriod: firstPeriod, lastPeriod: lastPeriod, now: now,
     counts: {
       monthly: monthlyCount, otherType: otherTypeCount,
@@ -3276,7 +3302,8 @@ const TAB_COVER  = 'Analytics Coverage';
 const TAB_STUDES = 'Analytics Students';
 const TAB_NAMES  = 'Analytics Names';
 const TAB_GAPS   = 'Analytics Gaps';
-const ANALYTICS_TABS = [TAB_DASH, TAB_COVER, TAB_STUDES, TAB_NAMES, TAB_GAPS];
+const TAB_FEES   = 'Analytics Fees';
+const ANALYTICS_TABS = [TAB_DASH, TAB_COVER, TAB_STUDES, TAB_FEES, TAB_NAMES, TAB_GAPS];
 
 // Never let a refresh write over one of the real data tabs, whatever a tab
 // name is changed to in future.
@@ -3413,6 +3440,29 @@ function analyticsTabModel_(cov) {
   });
   gapRows.sort(function (a, b) { return b[6] - a[6] || a[1].localeCompare(b[1]); });
 
+  // ── Fees: what was collected, by type, month by month ──
+  // The fee types come out of the data, so a type added to the panel's
+  // dropdown appears here by itself the first time it is used.
+  const feeTypeCols = cov.feeTypes.slice().sort();
+  const feeHead = ['Month'].concat(feeTypeCols).concat(['Total']);
+  const feeRows = months.map(function (m) {
+    const got = cov.feeRevenue[m.period] || {};
+    let total = 0;
+    const cells = feeTypeCols.map(function (t) {
+      total += got[t] || 0;
+      return got[t] || 0;
+    });
+    return [periodLong_(m.period)].concat(cells).concat([total]);
+  });
+  // Receipts with no fee month at all still took money; show them rather than
+  // quietly leaving them out of the year's total.
+  if (cov.feeRevenue['none']) {
+    const got = cov.feeRevenue['none'];
+    let total = 0;
+    const cells = feeTypeCols.map(function (t) { total += got[t] || 0; return got[t] || 0; });
+    feeRows.push(['(no fee month recorded)'].concat(cells).concat([total]));
+  }
+
   // The month the dashboard opens on: the last one that ought to be finished.
   let defaultMonth = '';
   for (let i = months.length - 1; i >= 0; i--) {
@@ -3427,6 +3477,7 @@ function analyticsTabModel_(cov) {
     students: { head: stuHead, rows: stuRows },
     coverage: { head: covHead, rows: covRows },
     names:    { head: nameHead, rows: nameRows },
+    fees:     { head: feeHead, rows: feeRows, types: feeTypeCols },
     gaps:     { head: gapHead, rows: gapRows },
     monthNames: monthNames,
     defaultMonth: defaultMonth,
@@ -3523,6 +3574,17 @@ function refreshAnalytics() {
   }
   cvr.autoResizeColumns(1, model.coverage.head.length);
 
+  // ── Fees collected, by type and month ──
+  const fee = analyticsSheet_(ss, TAB_FEES);
+  writeGrid_(fee, model.fees.head, model.fees.rows);
+  if (model.fees.rows.length && model.fees.head.length > 1) {
+    fee.getRange(2, 2, model.fees.rows.length, model.fees.head.length - 1)
+       .setNumberFormat('"Rs. "#,##0;;"–"');
+    fee.getRange(2, model.fees.head.length, model.fees.rows.length, 1).setFontWeight('bold');
+    fee.getRange(1, 1, model.fees.rows.length + 1, model.fees.head.length).createFilter();
+  }
+  fee.autoResizeColumns(1, model.fees.head.length);
+
   // ── Names and gaps ──
   const nms = analyticsSheet_(ss, TAB_NAMES);
   writeGrid_(nms, model.names.head, model.names.rows);
@@ -3548,6 +3610,7 @@ function refreshAnalytics() {
     '  ' + TAB_DASH  + '  - pick a month, see who has not paid\n' +
     '  ' + TAB_COVER + '  - ' + nCov + ' months\n' +
     '  ' + TAB_STUDES+ '  - ' + nStu + ' students x ' + model.monthNames.length + ' months\n' +
+    '  ' + TAB_FEES  + '  - ' + model.fees.types.length + ' fee types x ' + nCov + ' months\n' +
     '  ' + TAB_NAMES + '  - ' + model.names.rows.length + ' names off the receipts\n' +
     '  ' + TAB_GAPS  + '  - ' + model.gaps.rows.length + ' students missing a month\n' +
     'Enrollments, Receipts and Config were not touched.\n';
@@ -3619,6 +3682,19 @@ function writeDashboard_(sh, model, nStu, nCov, firstCol, lastCol, when) {
       col + '="UNPAID"),"Everybody due this month has paid.")');
   }
 
+  // What that month's money was actually for, pulled from the fees tab.
+  const F = "'" + TAB_FEES + "'";
+  const nFee = model.fees.rows.length, wFee = model.fees.head.length;
+  if (nFee && wFee > 2) {
+    sh.getRange('D8').setValue('COLLECTED, BY FEE TYPE').setFontWeight('bold');
+    sh.getRange('D9').setFormula(
+      '=IFERROR(TRANSPOSE(' + F + '!$B$1:$' + colLetter_(wFee - 1) + '$1),"")');
+    sh.getRange('E9').setFormula(
+      '=IFERROR(TRANSPOSE(INDEX(' + F + '!$B$2:$' + colLetter_(wFee - 1) + '$' + (nFee + 1) +
+      ',MATCH($B$5,' + F + '!$A$2:$A$' + (nFee + 1) + ',0),0)),"")');
+    sh.getRange(9, 5, Math.max(1, wFee - 2), 1).setNumberFormat('"Rs. "#,##0;;"–"');
+  }
+
   sh.getRange('D5').setValue('Roster').setFontWeight('bold');
   sh.getRange('E5').setValue(model.counts.roster + ' rows, ' + model.counts.billable +
                              ' monthly-fee students, ' + model.counts.active + ' active today');
@@ -3652,6 +3728,7 @@ function previewAnalyticsRefresh() {
   sizes[TAB_COVER]  = model.coverage.rows.length + ' months';
   sizes[TAB_STUDES] = model.students.rows.length + ' students x ' +
                       model.monthNames.length + ' months';
+  sizes[TAB_FEES]   = model.fees.types.length + ' fee types x ' + model.fees.rows.length + ' months';
   sizes[TAB_NAMES]  = model.names.rows.length + ' names printed on receipts';
   sizes[TAB_GAPS]   = model.gaps.rows.length + ' students missing at least one month';
 
