@@ -3329,6 +3329,42 @@ const TAB_GAPS   = 'Analytics Gaps';
 const TAB_FEES   = 'Analytics Fees';
 const ANALYTICS_TABS = [TAB_DASH, TAB_COVER, TAB_STUDES, TAB_FEES, TAB_NAMES, TAB_GAPS];
 
+// Only the Dashboard is worth looking at day to day. The rest are the working
+// out behind it — and they cannot simply be deleted, because the Dashboard's
+// month picker reads them live: the counts come from Analytics Students, the
+// money from Analytics Coverage and Analytics Fees. Without them the Dashboard
+// is a page of #REF!. So they are hidden instead, and one menu item brings
+// them back when a question needs answering.
+const ANALYTICS_WORKING_TABS = [TAB_COVER, TAB_STUDES, TAB_FEES, TAB_NAMES, TAB_GAPS];
+
+function setWorkingTabsHidden_(hidden) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const dash = ss.getSheetByName(TAB_DASH);
+  if (hidden && dash) ss.setActiveSheet(dash);   // cannot hide the active sheet
+  let n = 0;
+  ANALYTICS_WORKING_TABS.forEach(function (name) {
+    const sh = ss.getSheetByName(name);
+    if (!sh) return;
+    try { hidden ? sh.hideSheet() : sh.showSheet(); n++; } catch (e) { /* already so */ }
+  });
+  return n;
+}
+
+function hideAnalyticsWorkingTabs() {
+  const n = setWorkingTabsHidden_(true);
+  return report_(n + ' working tab(s) hidden. The Dashboard still reads them, so\n' +
+                 'everything on it keeps working.\n\n' +
+                 'Analytics ▸ Show the working tabs brings them back.\n');
+}
+
+function showAnalyticsWorkingTabs() {
+  const n = setWorkingTabsHidden_(false);
+  return report_(n + ' working tab(s) shown:\n  ' +
+                 ANALYTICS_WORKING_TABS.join('\n  ') + '\n\n' +
+                 'Hide them again with Analytics ▸ Hide the working tabs, or just\n' +
+                 'refresh the dashboard — a refresh always leaves them hidden.\n');
+}
+
 // Never let a refresh write over one of the real data tabs, whatever a tab
 // name is changed to in future.
 const PROTECTED_TABS = ['Enrollments', 'Receipts', 'Config'];
@@ -3339,6 +3375,10 @@ function onOpen() {
       .createMenu('Analytics')
       .addItem('Refresh dashboard', 'refreshAnalytics')
       .addItem('Preview refresh (writes nothing)', 'previewAnalyticsRefresh')
+      .addSeparator()
+      .addSeparator()
+      .addItem('Show the working tabs', 'showAnalyticsWorkingTabs')
+      .addItem('Hide the working tabs', 'hideAnalyticsWorkingTabs')
       .addSeparator()
       .addItem('Name matching report', 'showNameMatching')
       .addItem('Two-month receipts report', 'showMultiMonth')
@@ -3629,6 +3669,8 @@ function refreshAnalytics() {
   writeDashboard_(dash, model, nStu, nCov, firstCol, lastCol, started);
 
   ss.setActiveSheet(dash);
+  setWorkingTabsHidden_(true);   // leave only the Dashboard on the tab strip
+
   const msg = 'Analytics refreshed ' +
     Utilities.formatDate(started, Session.getScriptTimeZone(), 'dd MMM yyyy HH:mm') + '\n' +
     '  ' + TAB_DASH  + '  - pick a month, see who has not paid\n' +
@@ -3637,6 +3679,9 @@ function refreshAnalytics() {
     '  ' + TAB_FEES  + '  - ' + model.fees.types.length + ' fee types x ' + nCov + ' months\n' +
     '  ' + TAB_NAMES + '  - ' + model.names.rows.length + ' names off the receipts\n' +
     '  ' + TAB_GAPS  + '  - ' + model.gaps.rows.length + ' students missing a month\n' +
+    '\nOnly the Dashboard is left showing. The other five are hidden — the\n' +
+    'Dashboard reads them live, so they have to exist, but nobody needs to\n' +
+    'look at them. Analytics > Show the working tabs when you do.\n' +
     'Enrollments, Receipts and Config were not touched.\n';
   Logger.log(msg);
   return msg;
@@ -3779,6 +3824,10 @@ function previewAnalyticsRefresh() {
                                       'not present') + '\n';
   });
 
+  out += '\nAfterwards only ' + TAB_DASH + ' is left showing; the other ' +
+         ANALYTICS_WORKING_TABS.length + ' are hidden.\n';
+  out += 'They are not deleted — the Dashboard reads them live and would show\n';
+  out += '#REF! without them. Analytics > Show the working tabs reveals them.\n';
   out += '\nDASHBOARD WOULD OPEN ON : ' + (model.defaultMonth || '(no months yet)') + '\n';
   if (blocked) {
     out += '\n' + blocked + ' tab(s) are blocked. Rename or delete them first; a refresh\n';

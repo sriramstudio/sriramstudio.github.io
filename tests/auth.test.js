@@ -1554,5 +1554,54 @@ check('  ...with the receipt still booked to the first month only',
       sp2.indexOf('Receipts booked to this month    0') >= 0,
       sp2.split('\n').filter(function (l) { return l.indexOf('Receipts booked') >= 0; }));
 
+console.log('');
+console.log('--- only the dashboard stays on the tab strip ---');
+w = freshWorld('1234');
+var hidden = {}, active = null;
+var mkTab = function () {
+  var s = makeSheet([['x']]);
+  s.hideSheet = function () { hidden[this._name] = true; };
+  s.showSheet = function () { hidden[this._name] = false; };
+  return s;
+};
+['Analytics Dashboard','Analytics Coverage','Analytics Students',
+ 'Analytics Fees','Analytics Names','Analytics Gaps'].forEach(function (n) {
+  var s = mkTab(); s._name = n; w.sheets[n] = s;
+});
+// The stub spreadsheet needs to remember which sheet is active, because a
+// hidden sheet cannot be the active one.
+w.sandbox.SpreadsheetApp.getActiveSpreadsheet = function () {
+  return {
+    getSheetByName: function (n) { return w.sheets[n] || null; },
+    insertSheet: function (n) { return (w.sheets[n] = mkTab()); },
+    setActiveSheet: function (s) { active = s._name; }
+  };
+};
+
+var n = w.sandbox.hideAnalyticsWorkingTabs();
+check('the five working tabs are hidden',
+      ['Analytics Coverage','Analytics Students','Analytics Fees',
+       'Analytics Names','Analytics Gaps'].every(function (t) { return hidden[t]; }),
+      hidden);
+check('the dashboard is NOT hidden', !hidden['Analytics Dashboard'], hidden);
+check('  ...and is made active first, since a hidden sheet cannot be active',
+      active === 'Analytics Dashboard', active);
+check('the data tabs are never touched',
+      !hidden['Enrollments'] && !hidden['Receipts'] && !hidden['Config'], hidden);
+check('it says the dashboard still works',
+      n.indexOf('still reads them') >= 0, n);
+
+w.sandbox.showAnalyticsWorkingTabs();
+check('showing them again reveals every one',
+      ['Analytics Coverage','Analytics Students','Analytics Fees',
+       'Analytics Names','Analytics Gaps'].every(function (t) { return !hidden[t]; }),
+      hidden);
+
+// A missing tab must not throw — somebody may have deleted one by hand.
+delete w.sheets['Analytics Fees'];
+var threw = false;
+try { w.sandbox.hideAnalyticsWorkingTabs(); } catch (e) { threw = true; }
+check('a tab that has been deleted by hand does not break hiding', !threw, 'it threw');
+
 console.log('\n' + (fail === 0 ? 'ALL ' + pass + ' CHECKS PASSED' : pass + ' passed, ' + fail + ' FAILED'));
 process.exit(fail === 0 ? 0 : 1);

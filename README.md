@@ -538,13 +538,25 @@ Sheet once for it to show up.
 
 | Menu item | What it does |
 |-----------|--------------|
-| **Refresh dashboard** | Rebuilds all five tabs from the current data. |
+| **Refresh dashboard** | Rebuilds every tab from the current data, then hides all but the Dashboard. |
+| **Show / Hide the working tabs** | Reveals or re-hides the five tabs behind the Dashboard. |
 | **Preview refresh** | Says what a refresh would do. Writes nothing. |
 | **Name matching report** | Section 11A's name report, in a window. |
 | **Two-month receipts report** | Every receipt read as settling more than one month. |
 | **Fee gaps report** | Who is behind, in a window. |
 
-**The five tabs:**
+**Only `Analytics Dashboard` is visible.** The other five are hidden after
+every refresh — they are the working out behind it, and nobody needs them on
+the tab strip.
+
+> **They cannot be deleted.** The Dashboard is driven by live formulas that
+> read them: the counts come from `Analytics Students`, the money from
+> `Analytics Coverage` and `Analytics Fees`. Delete one and the Dashboard fills
+> with `#REF!`. That is also why the month picker responds instantly — it is
+> spreadsheet formulas, not a script. Use **Analytics ▸ Show the working tabs**
+> when you want to look at one; the next refresh hides them again.
+
+**The six tabs:**
 
 | Tab | What it holds |
 |-----|---------------|
