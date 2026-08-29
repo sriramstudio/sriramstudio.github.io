@@ -231,6 +231,18 @@
   .receipt-row .r-value { font-size: 14px; color: var(--ink); font-weight: 500; text-align: right; }
   .receipt-row .r-value.bold { font-weight: 700; }
   .receipt-row .r-value.mono { font-family: monospace; font-size: 13px; }
+  /* Several students on one receipt. Their names are not field labels, so they
+     do not get the small-caps muted treatment the labels use — they sit in
+     their own block, reading as a list of who was paid for. */
+  .receipt-students { padding: 4px 24px 0; }
+  .receipt-students .rs-head { font-size: 11px; color: var(--muted); letter-spacing: 0.07em;
+                               text-transform: uppercase; padding: 9px 0 2px; }
+  .receipt-students .rs-row { display: flex; justify-content: space-between; align-items: baseline;
+                              padding: 7px 0; border-bottom: 1px solid var(--border); gap: 12px; }
+  .receipt-students .rs-row:last-child { border-bottom: none; }
+  .receipt-students .rs-name { font-size: 14px; color: var(--ink); font-weight: 500; }
+  .receipt-students .rs-amt { font-size: 14px; color: var(--ink); font-weight: 700;
+                              text-align: right; white-space: nowrap; }
   .receipt-footer { padding: 16px 24px; background: var(--petal); display: flex; justify-content: space-between; align-items: flex-end; border-top: 1px solid var(--border); }
   .receipt-footer .contact { font-size: 11px; color: var(--muted); line-height: 2; }
   .receipt-footer .sig { text-align: right; }
@@ -282,6 +294,13 @@
     html, body { height: auto !important; overflow: visible !important; min-height: 0 !important; background: #fff !important; }
     /* Hide every direct child of body */
     body > * { display: none !important; }
+    /* Browsers drop background colours when printing unless told otherwise,
+       which turned the dark header into grey boxes with pale text. This keeps
+       the printed receipt looking like the one on screen. */
+    html, body, #print-target, #print-target * {
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
     /* Bring print-target back from off-screen and show it */
     #print-target {
       display: block !important;
@@ -289,16 +308,29 @@
       left: auto !important;
       top: auto !important;
       width: 100% !important;
-      max-width: 520px !important;
-      margin: 0 auto !important;
-      padding: 12px !important;
+      max-width: none !important;   /* was 520px, which left the receipt
+                                       marooned in the middle of an A4 sheet */
+      margin: 0 !important;
+      padding: 0 !important;
       pointer-events: auto !important;
+    }
+    /* The card fills the page rather than floating in it. */
+    #print-target .receipt-card {
+      width: 100% !important;
+      max-width: none !important;
+      margin: 0 !important;
+      border-radius: 0 !important;
+      box-shadow: none !important;
+      border: none !important;
+      break-inside: avoid;
     }
     /* Explicitly render each receipt element */
     #print-target .receipt-card,
     #print-target .receipt-header,
     #print-target .receipt-rows,
+    #print-target .receipt-students,
     #print-target .receipt-stamp  { display: block !important; }
+    #print-target .rs-row          { display: flex !important; }
     #print-target .receipt-header-top,
     #print-target .receipt-meta,
     #print-target .receipt-amount-bar,
@@ -308,8 +340,12 @@
     #print-target span,
     #print-target p,
     #print-target div               { visibility: visible !important; }
-    /* Page settings */
-    @page { margin: 8mm; size: A4 portrait; }
+    /* No page margin: the card provides its own padding, and an 8mm frame
+       around a receipt that already had 12mm of its own is what made the PDF
+       look like a small receipt pasted onto a large sheet. The paper is still
+       A4, so there is blank space below a short receipt — that is the page,
+       not the layout. */
+    @page { margin: 0; size: A4 portrait; }
   }
   @media (max-width: 380px) {
     .field-row { grid-template-columns: 1fr; }
@@ -1687,16 +1723,27 @@ function renderReceipt(d) {
   // With several students, one line each showing what that child came to —
   // the parent sees who they paid for without a fee-by-fee matrix. A single
   // student keeps the row it has always had.
-  const perStudent = (d.split && d.split.length > 1)
-    ? d.split.map(function (s) {
-        const t = s.fees.reduce(function (a, f) { return a + Number(f.amount); }, 0);
-        return [s.student, `<span class="bold">₹ ${t.toLocaleString('en-IN')}</span>`];
-      })
-    : [[(d.students && d.students.length > 1) ? 'Students' : 'Student Name',
-        `<span class="bold">${d.studentName}</span>`]];
+  // With several students, a block of its own above the details. Putting each
+  // name in the label column made them read as field names — small-caps and
+  // muted — and pushed the amounts into the value column, so the receipt lost
+  // its "Student Name" heading and its rhythm. One student keeps the plain row
+  // it has always had.
+  const many = d.split && d.split.length > 1;
+  const studentBlock = many
+    ? `<div class="receipt-students">
+         <div class="rs-head">Students</div>
+         ${d.split.map(function (s) {
+           const t = s.fees.reduce(function (a, f) { return a + Number(f.amount); }, 0);
+           return `<div class="rs-row">
+                     <span class="rs-name">${s.student}</span>
+                     <span class="rs-amt">₹ ${t.toLocaleString('en-IN')}</span>
+                   </div>`;
+         }).join('')}
+       </div>`
+    : '';
 
   const rows = [
-    ...perStudent,
+    ...(many ? [] : [['Student Name', `<span class="bold">${d.studentName}</span>`]]),
     ['Fee Type',     d.feeType || 'Monthly Fee'],
     ['Date Received', d.dateReceived ? new Date(d.dateReceived + 'T00:00:00').toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' }) : ''],
     ['Fee Period',   d.periodLabel || (d.month + ' ' + d.year)],
@@ -1729,6 +1776,7 @@ function renderReceipt(d) {
           <div class="words">${amountInWords(d.amount)}</div>
         </div>
       </div>
+      ${studentBlock}
       <div class="receipt-rows">${rows}</div>
       <div class="receipt-footer">
         <div class="contact">
