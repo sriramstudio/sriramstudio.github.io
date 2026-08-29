@@ -1677,11 +1677,12 @@ async function generateReceipt() {
 
 function renderReceipt(d) {
   // How the money arrived is bookkeeping, not something the parent needs on
-  // their receipt. Payment Mode and the UPI/Cash badge are deliberately absent
-  // here. Both are still asked for on the form, still written to the sheet and
-  // still shown in Records — this is a change to the output only.
-  // The transaction reference stays: it is the parent's proof of the specific
-  // payment, and is labelled without naming the payment rail.
+  // their receipt. The Payment Mode row, the UPI/Cash badge and the
+  // transaction reference are all deliberately absent here.
+  //
+  // Every one of them is still asked for on the form, still written to the
+  // sheet and still shown in the Records tab. This is the output only: the
+  // receipt says who paid, for what, for which months, and how much.
 
   // With several students, one line each showing what that child came to —
   // the parent sees who they paid for without a fee-by-fee matrix. A single
@@ -1701,7 +1702,6 @@ function renderReceipt(d) {
     ['Fee Period',   d.periodLabel || (d.month + ' ' + d.year)],
     ...(d.program  ? [['Program', d.program]]  : []),
     ...(contactLine(d) ? [['Contact', contactLine(d)]] : []),
-    ...(d.upiRef   ? [['Reference', `<span class="mono">${d.upiRef}</span>`]] : []),
     ...(d.note ? [['Note', d.note]] : []),
   ].map(([l,v]) => `<div class="receipt-row"><span class="r-label">${l}</span><span class="r-value">${v}</span></div>`).join('');
 
@@ -1804,7 +1804,6 @@ async function copyReceiptText() {
     `Date Received : ${d.dateReceived || d.issuedAt}\n` +
     `Fee Period    : ${d.periodLabel || (d.month + ' ' + d.year)}\n` +
     `Amount        : Rs. ${parseInt(d.amount).toLocaleString('en-IN')} (${amountInWords(d.amount)})\n` +
-    (d.upiRef ? `Reference     : ${d.upiRef}\n` : '') +
     (d.note   ? `Note          : ${d.note}\n`   : '') +
     `\n` +
     `Issued by Sriram Studio\n` +
