@@ -755,6 +755,24 @@ function addReceipt(d) {
     return { success: true, receiptNo: parts[0], issuedAt: parts[1], duplicate: true };
   }
 
+  const sheet  = getSheet('Receipts');
+  const config = getSheet('Config');
+
+  // ONE lock around both the duplicate check and the write. Two submissions a
+  // fraction of a second apart used to read receipt_seq before either wrote it
+  // back and were issued the SAME number — rows 878/879, 1007-1015 and others
+  // in the September data are exactly that. Locking only the counter would
+  // still let both pass the duplicate check, since neither had written its row
+  // yet when the other looked. Check and write have to be one atomic step.
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(30000);
+  } catch (lockErr) {
+    return { success: false, error: 'Another receipt is being saved right now. Try again in a moment.' };
+  }
+
+  try {
+
   // Outside the cache window, ask the sheet. Nothing is written yet: the panel
   // shows Anjali the receipts that already exist and sends the request back
   // with confirmDuplicate set if she means it.
@@ -763,35 +781,16 @@ function addReceipt(d) {
     if (matches.length) return { success: false, needsConfirm: true, matches: matches };
   }
 
-  const sheet   = getSheet('Receipts');
-  const config  = getSheet('Config');
-
-  // Two receipts saved in the same second both read receipt_seq before either
-  // wrote it back, and were issued the SAME number. The counter is taken under
-  // a lock and flushed before the lock goes; a crash after this leaves a gap in
-  // the numbering, which is the harmless side to fail on.
-  const lock = LockService.getScriptLock();
-  try {
-    lock.waitLock(20000);
-  } catch (lockErr) {
-    return { success: false, error: 'Another receipt is being saved right now. Try again in a moment.' };
-  }
-
   let seq = 1, seqRow = -1;
-  try {
-    const cfgData = config.getDataRange().getValues();
-    for (let i = 0; i < cfgData.length; i++) {
-      if (cfgData[i][0] === 'receipt_seq') {
-        seq    = parseInt(cfgData[i][1]) || 1;
-        seqRow = i + 1;
-        break;
-      }
+  const cfgData = config.getDataRange().getValues();
+  for (let i = 0; i < cfgData.length; i++) {
+    if (cfgData[i][0] === 'receipt_seq') {
+      seq    = parseInt(cfgData[i][1]) || 1;
+      seqRow = i + 1;
+      break;
     }
-    if (seqRow > 0) config.getRange(seqRow, 2).setValue(seq + 1);
-    SpreadsheetApp.flush();
-  } finally {
-    lock.releaseLock();
   }
+  if (seqRow > 0) config.getRange(seqRow, 2).setValue(seq + 1);
 
   const receiptNo = 'SS-' + new Date().getFullYear() + '-' + String(seq).padStart(4, '0');
   const issuedAt  = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd MMM yyyy');
@@ -850,7 +849,15 @@ function addReceipt(d) {
   }
 
   cache.put(fp, receiptNo + '||' + issuedAt, RECEIPT_DUP_WINDOW_SEC);
+
+  // Flush inside the lock: the next caller's duplicate check has to be able to
+  // see this row, or the pair that just raced would both be written again.
+  SpreadsheetApp.flush();
   return { success: true, receiptNo, issuedAt };
+
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function getReceipts() {
@@ -2020,9 +2027,18 @@ function duplicateGroups_() {
     });
   }
 
-  const repeated = [], modeFix = [], spread = [], revised = [], misKeyed = [],
-        otherType = [], namesake = [];
-  let overRepeat = 0, overMode = 0, overSpread = 0, overRevised = 0;
+  // A receipt number appearing on more than one row is not a judgement call —
+  // one receipt was written twice. Counted across the whole sheet, before any
+  // grouping, because the pair need not share a student or a period.
+  const numberCount = {};
+  for (let r = 1; r < data.length; r++) {
+    const no = norm(data[r][iNo]);
+    if (no) numberCount[no] = (numberCount[no] || 0) + 1;
+  }
+
+  const sameNumber = [], repeated = [], modeFix = [], spread = [], revised = [],
+        misKeyed = [], otherType = [], namesake = [];
+  let overSameNo = 0, overRepeat = 0, overMode = 0, overSpread = 0, overRevised = 0;
 
   Object.keys(groups).forEach(function (k) {
     const g = groups[k];
@@ -2036,6 +2052,17 @@ function duplicateGroups_() {
       const rows = byType[t];
       if (rows.length < 2) return;
       flagged = true;
+
+      // The receipt number itself repeats. Nothing below needs deciding: the
+      // same receipt is on the sheet twice. This has to be tested FIRST, or
+      // the consecutive-numbers test below reads 956 and 956 as "not
+      // consecutive" and files the pair under the mildest heading there is.
+      if (rows.some(function (x) { return numberCount[x.no] > 1; })) {
+        sameNumber.push(rows);
+        const amts = rows.map(function (x) { return x.amt; });
+        overSameNo += amts.reduce(function (a, b) { return a + b; }, 0) - Math.max.apply(null, amts);
+        return;
+      }
 
       // Two children can share a name — there are two Krisha Agarwals on the
       // roster. Different contact numbers mean different families, so these
@@ -2061,10 +2088,14 @@ function duplicateGroups_() {
       const days  = {}, modes = {};
       rows.forEach(function (x) { days[x.when] = true; modes[x.mode] = true; });
       const sameDay = Object.keys(days).length === 1;
-      const seqs = rows.map(function (x) { return x.seq; }).sort(function (a, b) { return a - b; });
-      const consecutive = seqs.every(function (v, i) { return i === 0 || v === seqs[i - 1] + 1; });
 
-      if (sameDay && consecutive && Object.keys(modes).length === 1) {
+      // Consecutive numbering used to be required here. It shouldn't be: Thea
+      // Mehta's 1115 and 1118 are the same student, same day, same amount and
+      // same UPI, with two unrelated receipts issued in between — a duplicate
+      // by every measure that matters, demoted to "check before deleting"
+      // purely because the numbers weren't adjacent. Same day and same mode is
+      // the signal; the gap between numbers is not evidence of anything.
+      if (sameDay && Object.keys(modes).length === 1) {
         repeated.push(rows); overRepeat += extra;
       } else if (sameDay && Object.keys(modes).length > 1) {
         modeFix.push(rows); overMode += extra;
@@ -2077,21 +2108,49 @@ function duplicateGroups_() {
 
   return {
     scanned: data.length - 1,
+    sameNumber: sameNumber,
     repeated: repeated, modeFix: modeFix, spread: spread, revised: revised,
     misKeyed: misKeyed, namesake: namesake, otherType: otherType,
-    overRepeat: overRepeat, overMode: overMode,
-    overSpread: overSpread, overRevised: overRevised
+    overSameNo: overSameNo, overRepeat: overRepeat, overMode: overMode,
+    overSpread: overSpread, overRevised: overRevised,
+    numberCount: numberCount
   };
+}
+
+
+// Every receipt number that appears on more than one row. Read-only, and the
+// fastest way to size the damage: these need no judgement at all.
+function previewDuplicateReceiptNumbers() {
+  const g = duplicateGroups_();
+  if (!g) return 'No receipts.';
+  const dupes = Object.keys(g.numberCount)
+                      .filter(function (n) { return g.numberCount[n] > 1; })
+                      .sort();
+  let out = 'RECEIPT NUMBERS USED MORE THAN ONCE\n===================================\n';
+  out += 'Receipts scanned : ' + g.scanned + '\n';
+  out += 'Numbers repeated : ' + dupes.length + '\n\n';
+  if (!dupes.length) {
+    out += 'None. Every receipt number is unique.\n';
+  } else {
+    out += 'Each of these numbers is on the sheet more than once. One receipt,\n';
+    out += 'written twice. Keep one row of each; the rest are not payments.\n\n';
+    dupes.forEach(function (n) { out += '  ' + pad_(n, 16) + g.numberCount[n] + ' rows\n'; });
+    out += '\nThe Duplicate Review tab lists the rows themselves.\n';
+  }
+  out += '\nReport only. Nothing was changed.\n';
+  Logger.log(out);
+  return out;
 }
 
 function findDuplicateReceipts() {
   const g = duplicateGroups_();
   if (!g) { Logger.log('No receipts.'); return 'No receipts.'; }
 
-  const repeated = g.repeated, modeFix = g.modeFix, spread = g.spread,
+  const sameNumber = g.sameNumber,
+        repeated = g.repeated, modeFix = g.modeFix, spread = g.spread,
         revised  = g.revised,  misKeyed = g.misKeyed, namesake = g.namesake,
         otherType = g.otherType;
-  const overRepeat = g.overRepeat, overMode = g.overMode,
+  const overSameNo = g.overSameNo, overRepeat = g.overRepeat, overMode = g.overMode,
         overSpread = g.overSpread, overRevised = g.overRevised;
 
   const line = function (x) {
@@ -2107,6 +2166,7 @@ function findDuplicateReceipts() {
 
   let out = 'POSSIBLE DUPLICATE RECEIPTS\n===========================\n';
   out += 'Receipts scanned : ' + g.scanned + '\n\n';
+  out += pad_('SAME RECEIPT NUMBER TWICE', 38) + pad_(sameNumber.length + ' grp', 9) + money_(overSameNo) + '\n';
   out += pad_('Submitted more than once', 38) + pad_(repeated.length + ' grp', 9) + money_(overRepeat) + '\n';
   out += pad_('Reissued with a different pay mode', 38) + pad_(modeFix.length + ' grp', 9) + money_(overMode) + '\n';
   out += pad_('Same amount, different days', 38) + pad_(spread.length + ' grp', 9) + money_(overSpread) + '\n';
@@ -2114,13 +2174,21 @@ function findDuplicateReceipts() {
   out += pad_('Period mis-keyed - NOT duplicates', 38) + pad_(misKeyed.length + ' grp', 9) + 'Rs. 0\n';
   out += pad_('Same name, different family - NOT dup', 38) + pad_(namesake.length + ' grp', 9) + 'Rs. 0\n';
   out += pad_('Different fee type - usually fine', 38) + pad_(otherType.length + ' grp', 9) + 'Rs. 0\n';
-  out += '\nMost likely over-counted: ' + money_(overRepeat + overMode) + '\n';
+  out += '\nCertainly over-counted: ' + money_(overSameNo) + '\n';
+  out += 'Most likely over-counted: ' + money_(overRepeat + overMode) + '\n';
   out += 'Needs checking on top of that: ' + money_(overSpread + overRevised) + '\n\n';
 
+  if (sameNumber.length) {
+    out += 'THE SAME RECEIPT NUMBER ON MORE THAN ONE ROW\n';
+    out += 'One receipt, written twice. Two submissions landed in the same\n';
+    out += 'second and were both given the number the counter was holding.\n';
+    out += 'Keep one row of each; the others are not payments.\n\n';
+    sameNumber.forEach(function (g2) { out += show(g2); });
+  }
   if (repeated.length) {
     out += 'SUBMITTED MORE THAN ONCE\n';
-    out += 'Same day, same payment mode, consecutive receipt numbers. Almost\n';
-    out += 'certainly the Generate button firing repeatedly. Keep the first.\n\n';
+    out += 'Same student, same day, same amount, same payment mode. Almost\n';
+    out += 'certainly the Generate button firing twice. Keep the first.\n\n';
     repeated.forEach(function (g) { out += show(g); });
   }
   if (modeFix.length) {
@@ -2173,8 +2241,11 @@ function findDuplicateReceipts() {
 const DUP_REVIEW_TAB = 'Duplicate Review';
 
 const DUP_CATEGORIES = [
+  { key: 'sameNumber', label: 'SAME RECEIPT NUMBER TWICE',
+    advice: 'One receipt written twice — two submissions landed in the same second and shared a number. No judgement needed: keep one row, delete the others.',
+    colour: '#F1AEB5' },
   { key: 'repeated',  label: 'Submitted more than once',
-    advice: 'Same day, same mode, consecutive numbers — the Generate button fired twice. Keep the first, delete the rest.',
+    advice: 'Same student, same day, same amount, same payment mode. The Generate button fired twice. Keep the first, delete the rest.',
     colour: '#F8D7DA' },
   { key: 'modeFix',   label: 'Reissued with a different payment mode',
     advice: 'Same day and amount, one Cash and one UPI. A correction. Keep the one with the right mode.',
@@ -2308,6 +2379,7 @@ function buildDuplicateReviewTab() {
     'Duplicate Review rebuilt.\n\n' +
     'Receipts scanned : ' + g.scanned + '\n' +
     'Groups flagged   : ' + groupNo + '  (' + flagged + ' receipts)\n\n' +
+    pad_('SAME RECEIPT NUMBER TWICE', 38) + pad_(g.sameNumber.length + ' grp', 9) + money_(g.overSameNo) + '\n' +
     pad_('Submitted more than once', 38) + pad_(g.repeated.length + ' grp', 9) + money_(g.overRepeat) + '\n' +
     pad_('Reissued with a different pay mode', 38) + pad_(g.modeFix.length + ' grp', 9) + money_(g.overMode) + '\n' +
     pad_('Same amount, different days', 38) + pad_(g.spread.length + ' grp', 9) + money_(g.overSpread) + '\n' +
@@ -2315,6 +2387,7 @@ function buildDuplicateReviewTab() {
     pad_('Period mis-keyed - NOT duplicates', 38) + pad_(g.misKeyed.length + ' grp', 9) + 'Rs. 0\n' +
     pad_('Same name, different family - NOT dup', 38) + pad_(g.namesake.length + ' grp', 9) + 'Rs. 0\n' +
     pad_('Different fee type - usually fine', 38) + pad_(g.otherType.length + ' grp', 9) + 'Rs. 0\n\n' +
+    'Certainly over-counted: ' + money_(g.overSameNo) + '\n' +
     'Most likely over-counted: ' + money_(g.overRepeat + g.overMode) + '\n' +
     'Needs checking on top of that: ' + money_(g.overSpread + g.overRevised) + '\n\n' +
     'No receipt was changed. Decisions already recorded were carried over.';
@@ -3716,6 +3789,7 @@ function onOpen() {
       .addItem('Two-month receipts report', 'showMultiMonth')
       .addItem('Fee gaps report', 'showFeeGaps')
       .addSeparator()
+      .addItem('Duplicate receipt NUMBERS (writes nothing)', 'showDuplicateNumbers')
       .addItem('Duplicate receipts report (writes nothing)', 'showDuplicates')
       .addItem('Rebuild the Duplicate Review tab', 'showDuplicateReviewTab')
       .addToUi();
@@ -3739,6 +3813,7 @@ function report_(text) {
 }
 
 // The report is the preview; the tab is the write. Run the report first.
+function showDuplicateNumbers()    { return report_(previewDuplicateReceiptNumbers()); }
 function showDuplicates()          { return report_(findDuplicateReceipts()); }
 function showDuplicateReviewTab()  { return report_(buildDuplicateReviewTab()); }
 

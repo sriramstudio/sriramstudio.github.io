@@ -425,7 +425,8 @@ Two entries at the bottom of the **Analytics** menu, for Saurav:
 
 | Menu item | What it does |
 |-----------|--------------|
-| **Duplicate receipts report (writes nothing)** | `findDuplicateReceipts` — the text report in a dialog. This is the preview; run it first. |
+| **Duplicate receipt NUMBERS (writes nothing)** | `previewDuplicateReceiptNumbers` — every receipt number that sits on more than one row. No judgement needed; start here. |
+| **Duplicate receipts report (writes nothing)** | `findDuplicateReceipts` — the text report in a dialog. This is the preview; run it before rebuilding the tab. |
 | **Rebuild the Duplicate Review tab** | `buildDuplicateReviewTab` — writes the findings into a `Duplicate Review` tab. Touches only that tab; never a receipt. |
 
 Both read the same scan, so the report and the tab can never disagree.
@@ -433,7 +434,8 @@ The tab is one row per flagged receipt, grouped and colour-coded:
 
 | Colour | Category | What to do |
 |--------|----------|------------|
-| Red | Submitted more than once | Same day, mode and consecutive numbers — the button fired twice. Keep the first. |
+| Deep red | **Same receipt number twice** | One receipt written twice — two submissions raced and shared a number. No judgement: keep one row, delete the others. |
+| Red | Submitted more than once | Same student, day, amount and mode — the button fired twice. Keep the first. |
 | Orange | Reissued with a different payment mode | A correction. Keep the one with the right mode. |
 | Yellow | Same amount, different days | May be a real second payment. Check first. |
 | Blue | Differing amounts, same period | A corrected reissue, or a part payment and the balance. Judgement. |
