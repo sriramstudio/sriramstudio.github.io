@@ -194,6 +194,38 @@
   .pin-dots input:focus { border-color: var(--saffron); background: var(--petal); }
   .pin-hint { font-size: 11px; color: var(--muted); }
 
+  /* ── Already-issued warning ──────────────────── */
+  .dup-overlay {
+    position: fixed; inset: 0; background: rgba(26,18,9,0.88); z-index: 600;
+    display: none; align-items: center; justify-content: center; padding: 20px;
+  }
+  .dup-overlay.show { display: flex; }
+  .dup-card {
+    background: var(--cream); border-radius: 20px; width: 100%; max-width: 460px;
+    max-height: 88vh; overflow-y: auto; padding: 28px 24px 22px;
+    box-shadow: var(--shadow);
+  }
+  .dup-card h2 { font-family: 'Playfair Display', serif; font-size: 21px; color: var(--danger); }
+  .dup-card > p { font-size: 13.5px; color: var(--muted); margin-top: 8px; line-height: 1.6; }
+  .dup-list { margin: 18px 0 4px; display: flex; flex-direction: column; gap: 10px; }
+  .dup-item {
+    background: var(--dang-bg); border: 1px solid #EFC9C9; border-left: 4px solid var(--danger);
+    border-radius: 10px; padding: 12px 14px;
+  }
+  .dup-item .dup-no { font-size: 14px; font-weight: 900; color: var(--ink); letter-spacing: .02em; }
+  .dup-item .dup-amt { float: right; font-size: 14px; font-weight: 900; color: var(--ink); }
+  .dup-item dl { margin-top: 8px; font-size: 12.5px; color: var(--muted); line-height: 1.8; }
+  .dup-item dt { display: inline; font-weight: 700; }
+  .dup-item dd { display: inline; margin: 0; }
+  .dup-item dd::after { content: ''; display: block; }
+  .dup-actions { display: flex; gap: 10px; margin-top: 20px; }
+  .dup-actions button { flex: 1; padding: 13px 10px; border-radius: 11px; font-size: 14px; font-weight: 700; }
+  .dup-cancel { background: var(--white); border: 1.5px solid var(--border); color: var(--ink); }
+  .dup-cancel:hover { background: var(--petal); }
+  .dup-go { background: var(--danger); color: #fff; }
+  .dup-go:hover { filter: brightness(1.08); }
+  .dup-note { font-size: 11.5px; color: var(--muted); text-align: center; margin-top: 12px; line-height: 1.5; }
+
   /* ── Amount Hero ─────────────────────────────── */
   .amount-field input { font-size: 28px; font-weight: 900; color: var(--saffron); }
   .amount-words { font-size: 12px; color: var(--muted); font-style: italic; margin-top: 5px; min-height: 18px; }
@@ -1691,7 +1723,20 @@ async function generateReceipt() {
   };
 
   try {
-    const r = await api('addReceipt', { data: encodeURIComponent(JSON.stringify(data)) });
+    let r = await api('addReceipt', { data: encodeURIComponent(JSON.stringify(data)) });
+
+    // The sheet already holds this receipt. Nothing was written — show Anjali
+    // what exists and send it back only if she says it is a separate payment.
+    if (r.needsConfirm) {
+      btn.textContent = 'Generate Receipt →'; btn.disabled = false;
+      const goAhead = await confirmDuplicateReceipt(r.matches || []);
+      if (!goAhead) { toast('Not saved — no receipt was issued', 'info'); return; }
+      data.confirmDuplicate = true;
+      data.duplicateOf = (r.matches || []).map(function (m) { return m.receiptNo; });
+      btn.textContent = 'Generating…'; btn.disabled = true;
+      r = await api('addReceipt', { data: encodeURIComponent(JSON.stringify(data)) });
+    }
+
     if (r.error) throw new Error(r.error);
     data.receiptNum = r.receiptNo;
     data.issuedAt   = r.issuedAt;
@@ -2151,6 +2196,76 @@ function amountInWords(n) {
   };
   return toW(parseInt(n)) + ' Rupees Only';
 }
+
+// ─── Already issued? ──────────────────────────────────────────
+// The backend found receipts already on the sheet for this student, this
+// month, this fee type and this amount, and wrote nothing. Anjali is shown
+// them and decides. Resolves true to issue it anyway, false to go back.
+function confirmDuplicateReceipt(matches) {
+  return new Promise(function (resolve) {
+    const list = document.getElementById('dup-list');
+    const many = matches.length > 1;
+    document.getElementById('dup-title').textContent =
+      many ? 'These receipts already exist' : 'This receipt already exists';
+    document.getElementById('dup-intro').textContent =
+      'A receipt for the same student, the same fee period, the same fee type and the same amount ' +
+      (many ? 'has already been issued ' + matches.length + ' times.' : 'has already been issued.') +
+      ' Nothing has been saved yet.';
+
+    list.innerHTML = '';
+    matches.forEach(function (m) {
+      const el = document.createElement('div');
+      el.className = 'dup-item';
+      el.innerHTML =
+        '<span class="dup-amt">₹ ' + Number(m.amount || 0).toLocaleString('en-IN') + '</span>' +
+        '<span class="dup-no"></span><dl>' +
+        '<dt>Issued</dt> <dd class="v-when"></dd>' +
+        '<dt>For</dt> <dd class="v-who"></dd>' +
+        '<dt>Period</dt> <dd class="v-per"></dd>' +
+        '<dt>Fee type</dt> <dd class="v-typ"></dd>' +
+        (m.payMode ? '<dt>Paid by</dt> <dd class="v-mode"></dd>' : '') +
+        (m.note    ? '<dt>Note</dt> <dd class="v-note"></dd>' : '') +
+        '</dl>';
+      // Names and notes come from the sheet — set as text, never as markup.
+      el.querySelector('.dup-no').textContent   = m.receiptNo || '';
+      el.querySelector('.v-when').textContent   = m.issuedAt || '—';
+      el.querySelector('.v-who').textContent    = m.students || '—';
+      el.querySelector('.v-per').textContent    = m.period || '—';
+      el.querySelector('.v-typ').textContent    = m.feeType || '—';
+      if (m.payMode) el.querySelector('.v-mode').textContent = m.payMode;
+      if (m.note)    el.querySelector('.v-note').textContent = m.note;
+      list.appendChild(el);
+    });
+
+    const overlay = document.getElementById('dup-overlay');
+    const finish = function (answer) {
+      overlay.classList.remove('show');
+      document.getElementById('dup-cancel').onclick = null;
+      document.getElementById('dup-go').onclick     = null;
+      document.onkeydown = null;
+      resolve(answer);
+    };
+    document.getElementById('dup-cancel').onclick = function () { finish(false); };
+    document.getElementById('dup-go').onclick     = function () { finish(true);  };
+    document.onkeydown = function (ev) { if (ev.key === 'Escape') finish(false); };
+    overlay.classList.add('show');
+    document.getElementById('dup-cancel').focus();
+  });
+}
 </script>
+
+<div id="dup-overlay" class="dup-overlay">
+  <div class="dup-card" role="alertdialog" aria-labelledby="dup-title">
+    <h2 id="dup-title">This receipt already exists</h2>
+    <p id="dup-intro"></p>
+    <div id="dup-list" class="dup-list"></div>
+    <div class="dup-actions">
+      <button id="dup-cancel" class="dup-cancel" type="button">Go back</button>
+      <button id="dup-go" class="dup-go" type="button">Issue it anyway</button>
+    </div>
+    <p class="dup-note">Issue it anyway only if this is a second, separate payment.
+      Either way it is recorded, and Saurav sees it in the Duplicate Review tab.</p>
+  </div>
+</div>
 </body>
 </html>

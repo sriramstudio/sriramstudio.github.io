@@ -68,7 +68,18 @@ function freshWorld(pin) {
       getActiveSpreadsheet: () => ({
         getSheetByName: n => sheets[n] || null,
         insertSheet: n => (sheets[n] = makeSheet([]))
+      }),
+      flush() {},
+      newDataValidation: () => ({
+        requireValueInList() { return this; },
+        setAllowInvalid()    { return this; },
+        build()              { return {}; }
       })
+    },
+    // addReceipt takes the receipt_seq counter under a lock: two receipts saved
+    // in the same second were being issued the same number.
+    LockService: {
+      getScriptLock: () => ({ waitLock() {}, releaseLock() {} })
     },
     CacheService: {
       getScriptCache: () => ({
@@ -1640,6 +1651,96 @@ var recent = mdl.students.rows.filter(function (r) { return r[2] === 'Normal Kid
 var prevIdx = mdl.firstMonthCol - 1 + mdl.monthNames.indexOf(prevLabel);
 check('a paid month still reads PAID after windowing',
       recent[prevIdx] === 'PAID', recent[prevIdx]);
+
+// ─── The duplicate guard at the point of issue ────────────────
+// The cache fingerprint only ever caught a retry inside its fifteen-minute
+// window. These check the guard that reads the sheet, where no window applies.
+console.log('');
+console.log('--- duplicate receipts are caught at issue ---');
+
+var dupReceipt = function (over) {
+  var base = {
+    studentName: 'Dup Kid', students: ['Dup Kid'], guardianPhone: '9000000002',
+    amount: '1500', month: 'August', year: '2026', payMode: 'Cash', upiRef: '',
+    feeType: 'Monthly Fee', dateReceived: '05 Aug 2026', note: ''
+  };
+  Object.keys(over || {}).forEach(function (k) { base[k] = over[k]; });
+  return base;
+};
+
+w = freshWorld('1234');
+var first = call(w, { action: 'addReceipt', pin: '1234', data: enc(dupReceipt()) });
+check('the first receipt is issued', first.success === true && !!first.receiptNo, first);
+
+// Past the cache window, so the sheet is what has to catch it.
+Object.keys(w.cache).forEach(function (k) { delete w.cache[k]; });
+var again = call(w, { action: 'addReceipt', pin: '1234',
+                      data: enc(dupReceipt({ dateReceived: '20 Aug 2026' })) });
+check('a second identical receipt is NOT written', again.success === false, again);
+check('  ...it asks for confirmation instead', again.needsConfirm === true, again);
+check('  ...and names the receipt that already exists',
+      (again.matches || []).length === 1 && again.matches[0].receiptNo === first.receiptNo,
+      again.matches);
+check('  ...and nothing reached the sheet', w.sheets.Receipts._data.length === 2,
+      w.sheets.Receipts._data.length - 1 + ' receipt rows');
+
+// Anjali decides it is a real second payment.
+var confirmed = call(w, { action: 'addReceipt', pin: '1234',
+                          data: enc(dupReceipt({ dateReceived: '20 Aug 2026',
+                                                 confirmDuplicate: true,
+                                                 duplicateOf: [first.receiptNo] })) });
+check('confirming issues it anyway', confirmed.success === true && !!confirmed.receiptNo, confirmed);
+check('  ...with a different receipt number', confirmed.receiptNo !== first.receiptNo,
+      [first.receiptNo, confirmed.receiptNo]);
+check('  ...and it is on the sheet', w.sheets.Receipts._data.length === 3,
+      w.sheets.Receipts._data.length - 1 + ' receipt rows');
+var confHdr = w.sheets.Receipts._data[0];
+var confCol = confHdr.indexOf('Duplicate Confirmed');
+check('  ...recorded as a decision, not a mistake',
+      confCol >= 0 && String(w.sheets.Receipts._data[2][confCol]).indexOf('Issued knowingly') === 0,
+      confCol >= 0 ? w.sheets.Receipts._data[2][confCol] : 'no Duplicate Confirmed column');
+
+// The narrow rule Saurav chose: amount and fee type must match too, so a part
+// payment or a corrected reissue is left to the review tab, not queried here.
+w = freshWorld('1234');
+call(w, { action: 'addReceipt', pin: '1234', data: enc(dupReceipt()) });
+Object.keys(w.cache).forEach(function (k) { delete w.cache[k]; });
+var diffAmt = call(w, { action: 'addReceipt', pin: '1234',
+                        data: enc(dupReceipt({ amount: '900' })) });
+check('a different amount for the same month goes through unquestioned',
+      diffAmt.success === true, diffAmt);
+
+w = freshWorld('1234');
+call(w, { action: 'addReceipt', pin: '1234', data: enc(dupReceipt()) });
+Object.keys(w.cache).forEach(function (k) { delete w.cache[k]; });
+var diffType = call(w, { action: 'addReceipt', pin: '1234',
+                         data: enc(dupReceipt({ feeType: 'Late Fee' })) });
+check('so does a different fee type', diffType.success === true, diffType);
+
+w = freshWorld('1234');
+call(w, { action: 'addReceipt', pin: '1234', data: enc(dupReceipt()) });
+Object.keys(w.cache).forEach(function (k) { delete w.cache[k]; });
+var diffMonth = call(w, { action: 'addReceipt', pin: '1234',
+                          data: enc(dupReceipt({ month: 'September' })) });
+check('and so does the next month', diffMonth.success === true, diffMonth);
+
+// A sibling receipt overlapping a single-child one is still the same fee.
+w = freshWorld('1234');
+call(w, { action: 'addReceipt', pin: '1234', data: enc(dupReceipt()) });
+Object.keys(w.cache).forEach(function (k) { delete w.cache[k]; });
+var sibling = call(w, { action: 'addReceipt', pin: '1234',
+                        data: enc(dupReceipt({ studentName: 'Dup Kid & Other Kid',
+                                               students: ['Dup Kid', 'Other Kid'] })) });
+check('one shared student is enough to raise the question',
+      sibling.needsConfirm === true, sibling);
+
+// 'Aug' and 'August' are the same month; the guard must not be spelled past.
+w = freshWorld('1234');
+call(w, { action: 'addReceipt', pin: '1234', data: enc(dupReceipt()) });
+Object.keys(w.cache).forEach(function (k) { delete w.cache[k]; });
+var shortMon = call(w, { action: 'addReceipt', pin: '1234',
+                         data: enc(dupReceipt({ month: 'Aug' })) });
+check('an abbreviated month does not slip past it', shortMon.needsConfirm === true, shortMon);
 
 console.log('\n' + (fail === 0 ? 'ALL ' + pass + ' CHECKS PASSED' : pass + ' passed, ' + fail + ' FAILED'));
 process.exit(fail === 0 ? 0 : 1);

@@ -203,6 +203,24 @@ student database. Ten wrong attempts locks the endpoint for 15 minutes.
 - **Receipt tab** → Type a name and pick from the autocomplete; the student becomes a chip. **Pick more than one to club siblings onto a single receipt** — one amount, one receipt number, all names printed. Remove a chip with its ×. Typing a name without picking still works for someone not yet in the database. Then amount, fee type, date received, note → Generate → Copy for WhatsApp or Print/Save PDF
 - **Records tab** → view/search/filter all enrollments, applications, and receipts
 
+### "This receipt already exists"
+
+Generate checks the `Receipts` tab before it writes anything. If the same
+student already has a receipt for **the same fee period, the same fee type and
+the same amount**, Anjali is shown the receipt(s) that already exist — number,
+date, who, period, amount, how it was paid — and nothing is saved.
+
+- **Go back** — nothing is written. This is the answer when the fee was already
+  receipted.
+- **Issue it anyway** — the receipt is written as normal, with its own number,
+  and the `Duplicate Confirmed` column records that it was a decision rather
+  than a slip. Use it only for a genuine second, separate payment.
+
+The check reads the sheet, so it holds however long ago the first receipt was
+issued. It is deliberately narrow — a **part payment, or a reissue at a
+corrected amount, will not ask**, because those differ in amount. Those are
+caught afterwards by the Duplicate Review tab (§11B-D).
+
 ### ID formats
 - **Enrollment ID:** `SR-YYYY-MMDDHHmmssSSS` (timestamp-based, never duplicates, auto-updates year)
 - **Receipt No:** `SS-YYYY-0001` (sequential; counter is `receipt_seq` in Config sheet — change it there to reset)
@@ -398,6 +416,41 @@ click Run, then read the **Execution log**.
 Every one of these was written for a specific one-off job and left in place in
 case the same problem recurs. The `preview` half of each pair always writes
 nothing — run it, read the log, and only then run its counterpart.
+
+---
+
+## 11-D. Duplicate Review tab
+
+Two entries at the bottom of the **Analytics** menu, for Saurav:
+
+| Menu item | What it does |
+|-----------|--------------|
+| **Duplicate receipts report (writes nothing)** | `findDuplicateReceipts` — the text report in a dialog. This is the preview; run it first. |
+| **Rebuild the Duplicate Review tab** | `buildDuplicateReviewTab` — writes the findings into a `Duplicate Review` tab. Touches only that tab; never a receipt. |
+
+Both read the same scan, so the report and the tab can never disagree.
+The tab is one row per flagged receipt, grouped and colour-coded:
+
+| Colour | Category | What to do |
+|--------|----------|------------|
+| Red | Submitted more than once | Same day, mode and consecutive numbers — the button fired twice. Keep the first. |
+| Orange | Reissued with a different payment mode | A correction. Keep the one with the right mode. |
+| Yellow | Same amount, different days | May be a real second payment. Check first. |
+| Blue | Differing amounts, same period | A corrected reissue, or a part payment and the balance. Judgement. |
+| Green | Mis-keyed period / same name different family | **Not** duplicates. Fix the month, or leave both alone. |
+| Grey | Same period, different fee type | Registration or costume fee alongside the monthly. Normally fine. |
+
+Two columns matter:
+
+- **Your decision** — a dropdown (Keep / Delete / Checked — not a duplicate /
+  Fix the month). It is **preserved across rebuilds**, keyed by receipt number,
+  so a group already settled comes back carrying the answer.
+- **Confirmed at issue** — set when Anjali was warned at generation time and
+  issued it anyway. A blank here means nobody saw it coming.
+
+**Receipts row** is the row number *at the moment the tab was built*. Deleting
+a row shifts everything below it, so delete from the bottom up, or rebuild the
+tab after each deletion. `Receipt No` is the key that never moves.
 
 ---
 

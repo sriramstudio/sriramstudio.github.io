@@ -637,6 +637,110 @@ function receiptFingerprint_(d) {
   return fp.substring(0, 240);
 }
 
+// ─── Is this receipt already on the sheet? ────────────────────
+// The cache fingerprint above is a double-click guard and nothing more: it
+// forgets after fifteen minutes, so the same fee receipted again the next day
+// walked straight in. These read the Receipts sheet itself, so there is no
+// window. They never block — the answer goes back to the panel, Anjali is
+// shown what already exists, and she decides.
+
+// Every period a receipt covers. 'Fee Months' holds the whole span when one
+// receipt settles several; older receipts have only Fee Month + Fee Year.
+// Normalised to 'January 2026' so 'Jan' and 'January' compare equal.
+function feePeriodKeys_(months, month, year) {
+  const out = {};
+  const add = function (m, y) {
+    const mi = monthIndexLoose_(m);
+    const yy = (y === null || y === undefined) ? '' : y.toString().trim();
+    if (mi >= 0 && yy) out[MONTH_NAMES[mi] + ' ' + yy] = true;
+  };
+  (months === null || months === undefined ? '' : months.toString())
+    .split('|').forEach(function (p) {
+      const bits = p.trim().split(/\s+/);
+      if (bits[0]) add(bits[0], bits[1]);
+    });
+  add(month, year);
+  return Object.keys(out);
+}
+
+// The names on a receipt, normalised. 'Students' is pipe-separated when a
+// receipt covers siblings; Student Name is the fallback for older rows.
+function receiptStudentSet_(students, studentName) {
+  const raw = (students === null || students === undefined) ? '' : students.toString().trim();
+  return (raw ? raw.split('|') : [studentName]).map(normName_).filter(Boolean);
+}
+
+// Receipts already on the sheet that share a student, overlap the fee period,
+// and carry the same fee type and the same amount. Amount equality is what
+// keeps this quiet: a part payment or a corrected reissue differs in amount
+// and is left to the Duplicate Review tab rather than interrupting Anjali.
+function findReceiptMatches_(d) {
+  const data = getSheet('Receipts').getDataRange().getValues();
+  if (data.length <= 1) return [];
+
+  const norm = function (v) { return (v === null || v === undefined) ? '' : v.toString().trim(); };
+  const head = data[0].map(norm);
+  const iNo   = head.indexOf('Receipt No');
+  const iWhen = head.indexOf('Issued At');
+  const iName = head.indexOf('Student Name');
+  const iStu  = head.indexOf('Students');
+  const iAmt  = headerIndex_(head, 'Amount');
+  const iMon  = head.indexOf('Fee Month');
+  const iYr   = head.indexOf('Fee Year');
+  const iMons = head.indexOf('Fee Months');
+  const iType = head.indexOf('Fee Type');
+  const iMode = head.indexOf('Payment Mode');
+  const iNote = head.indexOf('Note');
+  const iSplt = head.indexOf('Fee Split');
+  if (iNo < 0 || iAmt < 0 || iType < 0) return [];
+
+  const split   = (d.split && d.split.length) ? d.split : null;
+  const wantWho = receiptStudentSet_(
+                    (d.students && d.students.length) ? d.students.join(' | ') : '',
+                    d.studentName);
+  const wantPer = feePeriodKeys_((d.feeMonths || []).join(' | '), d.month, d.year);
+  const wantAmt = split ? feeSplitTotal_(split) : (Number(d.amount) || 0);
+  const wantTyp = normName_(split ? (feeTypesIn_(split).join(' + ') || d.feeType) : d.feeType);
+  const wantSpl = normName_(serialiseFeeSplit_(split));
+  if (!wantWho.length || !wantPer.length || !wantAmt) return [];
+
+  const out = [];
+  for (let r = 1; r < data.length; r++) {
+    const row = data[r];
+    if (!norm(row[iNo])) continue;
+
+    if ((parseFloat(norm(row[iAmt]).replace(/[^0-9.]/g, '')) || 0) !== wantAmt) continue;
+    if (normName_(row[iType]) !== wantTyp) continue;
+
+    // Two receipts for the same siblings, same month and same total but a
+    // different division between them are different payments — the same
+    // reasoning the cache fingerprint already uses. Only when both state a
+    // split can they be told apart; otherwise the amount has to carry it.
+    const haveSpl = iSplt >= 0 ? normName_(row[iSplt]) : '';
+    if (wantSpl && haveSpl && wantSpl !== haveSpl) continue;
+
+    const who = receiptStudentSet_(iStu >= 0 ? row[iStu] : '', norm(row[iName]));
+    if (!who.some(function (n) { return wantWho.indexOf(n) >= 0; })) continue;
+
+    const per = feePeriodKeys_(iMons >= 0 ? row[iMons] : '', norm(row[iMon]), norm(row[iYr]));
+    const overlap = per.filter(function (p) { return wantPer.indexOf(p) >= 0; });
+    if (!overlap.length) continue;
+
+    out.push({
+      receiptNo: norm(row[iNo]),
+      issuedAt:  shortDate_(row[iWhen]),
+      students:  (norm(iStu >= 0 ? row[iStu] : '') || norm(row[iName])).replace(/\s*\|\s*/g, ', '),
+      period:    overlap.join(', '),
+      amount:    parseFloat(norm(row[iAmt]).replace(/[^0-9.]/g, '')) || 0,
+      feeType:   norm(row[iType]),
+      payMode:   iMode >= 0 ? norm(row[iMode]) : '',
+      note:      iNote >= 0 ? norm(row[iNote]) : '',
+      row:       r + 1
+    });
+  }
+  return out;
+}
+
 function addReceipt(d) {
   ensureReceiptStudentsColumn_();
 
@@ -650,19 +754,44 @@ function addReceipt(d) {
     const parts = seen.split('||');
     return { success: true, receiptNo: parts[0], issuedAt: parts[1], duplicate: true };
   }
+
+  // Outside the cache window, ask the sheet. Nothing is written yet: the panel
+  // shows Anjali the receipts that already exist and sends the request back
+  // with confirmDuplicate set if she means it.
+  if (!d.confirmDuplicate) {
+    const matches = findReceiptMatches_(d);
+    if (matches.length) return { success: false, needsConfirm: true, matches: matches };
+  }
+
   const sheet   = getSheet('Receipts');
   const config  = getSheet('Config');
-  const cfgData = config.getDataRange().getValues();
+
+  // Two receipts saved in the same second both read receipt_seq before either
+  // wrote it back, and were issued the SAME number. The counter is taken under
+  // a lock and flushed before the lock goes; a crash after this leaves a gap in
+  // the numbering, which is the harmless side to fail on.
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(20000);
+  } catch (lockErr) {
+    return { success: false, error: 'Another receipt is being saved right now. Try again in a moment.' };
+  }
 
   let seq = 1, seqRow = -1;
-  for (let i = 0; i < cfgData.length; i++) {
-    if (cfgData[i][0] === 'receipt_seq') {
-      seq    = parseInt(cfgData[i][1]) || 1;
-      seqRow = i + 1;
-      break;
+  try {
+    const cfgData = config.getDataRange().getValues();
+    for (let i = 0; i < cfgData.length; i++) {
+      if (cfgData[i][0] === 'receipt_seq') {
+        seq    = parseInt(cfgData[i][1]) || 1;
+        seqRow = i + 1;
+        break;
+      }
     }
+    if (seqRow > 0) config.getRange(seqRow, 2).setValue(seq + 1);
+    SpreadsheetApp.flush();
+  } finally {
+    lock.releaseLock();
   }
-  if (seqRow > 0) config.getRange(seqRow, 2).setValue(seq + 1);
 
   const receiptNo = 'SS-' + new Date().getFullYear() + '-' + String(seq).padStart(4, '0');
   const issuedAt  = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd MMM yyyy');
@@ -693,9 +822,9 @@ function addReceipt(d) {
   // The split and its per-type totals go in columns of their own, created on
   // first use and always at the END of the sheet, so the thirteen columns a
   // receipt has always used never move. Written by header name, not position.
+  const row         = sheet.getLastRow();
   const spansMonths = !!(d.feeMonths && d.feeMonths.length > 1);
   if (split || spansMonths) {
-    const row     = sheet.getLastRow();
     const totals  = split ? feeTotalsByType_(split) : {};
     const put     = {};
     Object.keys(totals).forEach(function (t) { put[t + ' ₹'] = totals[t]; });
@@ -709,6 +838,15 @@ function addReceipt(d) {
       const at = ensureColumn_('Receipts', header);   // 0-based
       sheet.getRange(row, at + 1).setValue(put[header]);
     });
+  }
+
+  // Anjali was warned and issued it anyway. Recording that is the difference
+  // between a mistake and a decision, and the Duplicate Review tab says which.
+  if (d.confirmDuplicate) {
+    const at = ensureColumn_('Receipts', 'Duplicate Confirmed');
+    const alongside = (d.duplicateOf && d.duplicateOf.length) ? d.duplicateOf.join(', ') : '';
+    sheet.getRange(row, at + 1).setValue(
+      'Issued knowingly' + (alongside ? ' — alongside ' + alongside : ''));
   }
 
   cache.put(fp, receiptNo + '||' + issuedAt, RECEIPT_DUP_WINDOW_SEC);
@@ -1828,10 +1966,15 @@ function noteMonth_(note) {
   return '';
 }
 
-function findDuplicateReceipts() {
+// The scan and the classification, with no output of its own. Two things read
+// it: findDuplicateReceipts, which prints the text report, and
+// buildDuplicateReviewTab, which writes the review tab. One source of truth —
+// the two can never disagree about what counts as a duplicate.
+// Returns null when there is nothing to scan.
+function duplicateGroups_() {
   const norm = function (v) { return (v === null || v === undefined) ? '' : v.toString().trim(); };
   const data = getSheet('Receipts').getDataRange().getValues();
-  if (data.length <= 1) { Logger.log('No receipts.'); return 'No receipts.'; }
+  if (data.length <= 1) return null;
 
   const head = data[0].map(norm);
   const iNo   = head.indexOf('Receipt No');
@@ -1845,6 +1988,8 @@ function findDuplicateReceipts() {
   const iMode = head.indexOf('Payment Mode');
   const iNote = head.indexOf('Note');
   const iCon  = head.indexOf('Contact');
+  const iMons = head.indexOf('Fee Months');
+  const iConf = head.indexOf('Duplicate Confirmed');
 
   const groups = {};
   for (let r = 1; r < data.length; r++) {
@@ -1859,6 +2004,9 @@ function findDuplicateReceipts() {
     const key = who + ' || ' + (month + ' ' + norm(row[iYr])).trim();
     (groups[key] = groups[key] || []).push({
       row: r + 1, no: no, when: shortDate_(row[iWhen]), who: who,
+      // `who` is normalised so it can be a grouping key. The tab shows people
+      // their own names, not lowercased ones.
+      whoShown: (rawStu || norm(row[iName])).replace(/\s*\|\s*/g, ', '),
       period: (month + ' ' + norm(row[iYr])).trim() || '(no period)',
       month: month,
       amt: parseFloat(norm(row[iAmt]).replace(/[^0-9.]/g, '')) || 0,
@@ -1866,6 +2014,8 @@ function findDuplicateReceipts() {
       mode: norm(row[iMode]),
       note: norm(row[iNote]),
       contact: iCon >= 0 ? norm(row[iCon]).replace(/\D/g, '') : '',
+      months: iMons >= 0 ? norm(row[iMons]).replace(/\s*\|\s*/g, ', ') : '',
+      confirmed: iConf >= 0 ? norm(row[iConf]) : '',
       seq: parseInt((no.match(/(\d+)\s*$/) || [0, 0])[1], 10)
     });
   }
@@ -1925,6 +2075,25 @@ function findDuplicateReceipts() {
     if (!flagged && Object.keys(byType).length > 1) otherType.push(g);
   });
 
+  return {
+    scanned: data.length - 1,
+    repeated: repeated, modeFix: modeFix, spread: spread, revised: revised,
+    misKeyed: misKeyed, namesake: namesake, otherType: otherType,
+    overRepeat: overRepeat, overMode: overMode,
+    overSpread: overSpread, overRevised: overRevised
+  };
+}
+
+function findDuplicateReceipts() {
+  const g = duplicateGroups_();
+  if (!g) { Logger.log('No receipts.'); return 'No receipts.'; }
+
+  const repeated = g.repeated, modeFix = g.modeFix, spread = g.spread,
+        revised  = g.revised,  misKeyed = g.misKeyed, namesake = g.namesake,
+        otherType = g.otherType;
+  const overRepeat = g.overRepeat, overMode = g.overMode,
+        overSpread = g.overSpread, overRevised = g.overRevised;
+
   const line = function (x) {
     return '     row ' + pad_(x.row, 6) + pad_(x.no, 15) + pad_(x.when, 8) +
            pad_(money_(x.amt), 12) + pad_(x.mode, 6) + pad_(x.contact || '-', 12) +
@@ -1937,7 +2106,7 @@ function findDuplicateReceipts() {
   };
 
   let out = 'POSSIBLE DUPLICATE RECEIPTS\n===========================\n';
-  out += 'Receipts scanned : ' + (data.length - 1) + '\n\n';
+  out += 'Receipts scanned : ' + g.scanned + '\n\n';
   out += pad_('Submitted more than once', 38) + pad_(repeated.length + ' grp', 9) + money_(overRepeat) + '\n';
   out += pad_('Reissued with a different pay mode', 38) + pad_(modeFix.length + ' grp', 9) + money_(overMode) + '\n';
   out += pad_('Same amount, different days', 38) + pad_(spread.length + ' grp', 9) + money_(overSpread) + '\n';
@@ -1989,6 +2158,169 @@ function findDuplicateReceipts() {
   out += 'Report only. Nothing was changed.\n';
   Logger.log(out);
   return out;
+}
+
+
+// ─── Duplicate Review tab ─────────────────────────────────────
+// The same findings as the report above, written into a tab of the records
+// file so Saurav can work through them and delete what should go. It writes
+// its OWN tab and reads Receipts — it never changes a receipt.
+//
+// Your decision is the one column that is his. It survives a rebuild: the tab
+// is keyed by receipt number, so a group he has already settled comes back
+// carrying his note rather than asking again.
+
+const DUP_REVIEW_TAB = 'Duplicate Review';
+
+const DUP_CATEGORIES = [
+  { key: 'repeated',  label: 'Submitted more than once',
+    advice: 'Same day, same mode, consecutive numbers — the Generate button fired twice. Keep the first, delete the rest.',
+    colour: '#F8D7DA' },
+  { key: 'modeFix',   label: 'Reissued with a different payment mode',
+    advice: 'Same day and amount, one Cash and one UPI. A correction. Keep the one with the right mode.',
+    colour: '#FBE3CD' },
+  { key: 'spread',    label: 'Same amount, different days',
+    advice: 'May be a genuine second payment. Check before deleting.',
+    colour: '#FFF3CD' },
+  { key: 'revised',   label: 'Differing amounts, same period',
+    advice: 'A corrected reissue, or a part payment and then the balance. Judgement needed.',
+    colour: '#E4EEFB' },
+  { key: 'misKeyed',  label: 'Period mis-keyed — both are real',
+    advice: 'The notes name different months, so a Fee Month is wrong. Fix the month; delete neither.',
+    colour: '#E6F4EA' },
+  { key: 'namesake',  label: 'Same name, different family',
+    advice: 'Different contact numbers — two different children. Delete neither.',
+    colour: '#E6F4EA' },
+  { key: 'otherType', label: 'Same period, different fee type',
+    advice: 'Registration or costume fee alongside the monthly fee. Normally fine.',
+    colour: '#F1F1F1' }
+];
+
+const DUP_REVIEW_HEADERS = [
+  'Group', 'What this looks like', 'What to do', 'Students', 'Fee period',
+  'Fee months', 'Fee type', 'Receipt No', 'Receipts row', 'Issued', 'Amount',
+  'Mode', 'Contact', 'Note', 'Confirmed at issue', 'Your decision'
+];
+
+const DUP_DECISIONS = ['Keep', 'Delete', 'Checked — not a duplicate', 'Fix the month'];
+
+// Decisions already recorded, keyed by receipt number, so a rebuild does not
+// wipe the work of going through the list.
+function existingDupDecisions_() {
+  const ss  = SpreadsheetApp.getActiveSpreadsheet();
+  const tab = ss.getSheetByName(DUP_REVIEW_TAB);
+  const out = {};
+  if (!tab || tab.getLastRow() < 2) return out;
+  const width = tab.getLastColumn();
+  const head  = tab.getRange(1, 1, 1, width).getValues()[0]
+                   .map(function (v) { return (v === null ? '' : v.toString().trim()); });
+  const iNo  = head.indexOf('Receipt No');
+  const iDec = head.indexOf('Your decision');
+  if (iNo < 0 || iDec < 0) return out;
+  const rows = tab.getRange(2, 1, tab.getLastRow() - 1, width).getValues();
+  rows.forEach(function (r) {
+    const no  = (r[iNo]  === null ? '' : r[iNo].toString().trim());
+    const dec = (r[iDec] === null ? '' : r[iDec].toString().trim());
+    if (no && dec) out[no] = dec;
+  });
+  return out;
+}
+
+function buildDuplicateReviewTab() {
+  const g = duplicateGroups_();
+  if (!g) return 'No receipts to scan. Nothing was written.';
+
+  const kept = existingDupDecisions_();
+  const ss   = SpreadsheetApp.getActiveSpreadsheet();
+  let tab = ss.getSheetByName(DUP_REVIEW_TAB);
+  if (!tab) tab = ss.insertSheet(DUP_REVIEW_TAB);
+
+  const rows = [], colours = [];
+  let groupNo = 0, flagged = 0;
+
+  DUP_CATEGORIES.forEach(function (cat) {
+    (g[cat.key] || []).forEach(function (grp) {
+      groupNo++;
+      grp.forEach(function (x, i) {
+        flagged++;
+        rows.push([
+          groupNo,
+          i === 0 ? cat.label  : '',
+          i === 0 ? cat.advice : '',
+          x.whoShown || x.who, x.period, x.months || '', x.type, x.no, x.row, x.when,
+          x.amt, x.mode, x.contact || '', x.note || '', x.confirmed || '',
+          kept[x.no] || ''
+        ]);
+        colours.push(cat.colour);
+      });
+    });
+  });
+
+  tab.clear();
+  if (tab.getMaxColumns() < DUP_REVIEW_HEADERS.length) {
+    tab.insertColumnsAfter(tab.getMaxColumns(),
+                           DUP_REVIEW_HEADERS.length - tab.getMaxColumns());
+  }
+
+  tab.getRange(1, 1, 1, DUP_REVIEW_HEADERS.length)
+     .setValues([DUP_REVIEW_HEADERS])
+     .setFontWeight('bold').setBackground('#2C1A0E').setFontColor('#FFFFFF')
+     .setVerticalAlignment('middle').setWrap(true);
+
+  // Row numbers move the moment a row above them is deleted. Rebuild after
+  // each deletion, or work bottom-up; the receipt number is the safe key.
+  tab.getRange(1, DUP_REVIEW_HEADERS.indexOf('Receipts row') + 1)
+     .setNote('Row number in the Receipts tab AT THE TIME THIS WAS BUILT.\n' +
+              'Deleting a row shifts every row below it. Rebuild this tab after\n' +
+              'each deletion, or delete from the bottom up. Receipt No never moves.');
+
+  tab.setFrozenRows(1);
+
+  if (!rows.length) {
+    tab.getRange(2, 1).setValue('No possible duplicates found. ' + g.scanned + ' receipts scanned.');
+    return 'No possible duplicates found. ' + g.scanned + ' receipts scanned.';
+  }
+
+  tab.getRange(2, 1, rows.length, DUP_REVIEW_HEADERS.length)
+     .setValues(rows)
+     .setVerticalAlignment('top');
+  colours.forEach(function (c, i) {
+    tab.getRange(i + 2, 1, 1, DUP_REVIEW_HEADERS.length).setBackground(c);
+  });
+
+  const cAmt = DUP_REVIEW_HEADERS.indexOf('Amount') + 1;
+  tab.getRange(2, cAmt, rows.length, 1).setNumberFormat('₹#,##0');
+  tab.getRange(2, 3, rows.length, 1).setWrap(true);
+
+  const cDec = DUP_REVIEW_HEADERS.indexOf('Your decision') + 1;
+  tab.getRange(2, cDec, rows.length, 1).setDataValidation(
+    SpreadsheetApp.newDataValidation()
+      .requireValueInList(DUP_DECISIONS, true).setAllowInvalid(true).build());
+
+  tab.setColumnWidth(1, 55);
+  tab.setColumnWidth(2, 200);
+  tab.setColumnWidth(3, 300);
+  tab.setColumnWidth(4, 190);
+  tab.setColumnWidth(DUP_REVIEW_HEADERS.indexOf('Note') + 1, 200);
+  tab.setColumnWidth(cDec, 170);
+
+  const summary =
+    'Duplicate Review rebuilt.\n\n' +
+    'Receipts scanned : ' + g.scanned + '\n' +
+    'Groups flagged   : ' + groupNo + '  (' + flagged + ' receipts)\n\n' +
+    pad_('Submitted more than once', 38) + pad_(g.repeated.length + ' grp', 9) + money_(g.overRepeat) + '\n' +
+    pad_('Reissued with a different pay mode', 38) + pad_(g.modeFix.length + ' grp', 9) + money_(g.overMode) + '\n' +
+    pad_('Same amount, different days', 38) + pad_(g.spread.length + ' grp', 9) + money_(g.overSpread) + '\n' +
+    pad_('Differing amounts (a reissue?)', 38) + pad_(g.revised.length + ' grp', 9) + money_(g.overRevised) + '\n' +
+    pad_('Period mis-keyed - NOT duplicates', 38) + pad_(g.misKeyed.length + ' grp', 9) + 'Rs. 0\n' +
+    pad_('Same name, different family - NOT dup', 38) + pad_(g.namesake.length + ' grp', 9) + 'Rs. 0\n' +
+    pad_('Different fee type - usually fine', 38) + pad_(g.otherType.length + ' grp', 9) + 'Rs. 0\n\n' +
+    'Most likely over-counted: ' + money_(g.overRepeat + g.overMode) + '\n' +
+    'Needs checking on top of that: ' + money_(g.overSpread + g.overRevised) + '\n\n' +
+    'No receipt was changed. Decisions already recorded were carried over.';
+
+  Logger.log(summary);
+  return summary;
 }
 
 
@@ -3383,6 +3715,9 @@ function onOpen() {
       .addItem('Name matching report', 'showNameMatching')
       .addItem('Two-month receipts report', 'showMultiMonth')
       .addItem('Fee gaps report', 'showFeeGaps')
+      .addSeparator()
+      .addItem('Duplicate receipts report (writes nothing)', 'showDuplicates')
+      .addItem('Rebuild the Duplicate Review tab', 'showDuplicateReviewTab')
       .addToUi();
   } catch (e) {
     // No UI (a trigger, or the editor). The menu simply is not built.
@@ -3402,6 +3737,10 @@ function report_(text) {
   } catch (e) { /* editor, no UI */ }
   return text;
 }
+
+// The report is the preview; the tab is the write. Run the report first.
+function showDuplicates()          { return report_(findDuplicateReceipts()); }
+function showDuplicateReviewTab()  { return report_(buildDuplicateReviewTab()); }
 
 function showNameMatching() { return report_(previewReceiptNameMatching()); }
 function showMultiMonth()   { return report_(previewMultiMonthReceipts()); }
