@@ -4787,3 +4787,406 @@ function previewAnalyticsRefresh() {
   out += '\nReport only. Nothing was changed.\n';
   return report_(out);
 }
+
+
+// ═══════════════════════════════════════════════════════════════
+// ONE-OFF: legacy phone and centre backfill (September 2026)
+// ───────────────────────────────────────────────────────────────
+// Built from Anjali's phonebook export matched against the roster, with every
+// ambiguous case decided by Saurav in Phone Backfill Review.xlsx. Rows he
+// marked "None - leave blank" are absent from this list on purpose.
+//
+// Run previewContactBackfill() FIRST, read the log, then applyContactBackfill().
+// Both are editor-only and must never be routed through doGet.
+//
+// Once applied and verified, this whole block can be deleted — it is a record
+// of one import, not part of the system.
+
+const BACKFILL_CENTRES = {
+  B: 'Bhawanipur – 53A Girish Mukherjee Road',
+  W: 'Wood Street – 6/4 Govind Mahal',
+  K: 'Kankurgachi – P-328 CIT Road',
+  S: 'Salt Lake – 34, DA Block, Sector 1'
+};
+
+// [ Enrollment ID, phone (blank = none), centre key (blank = none) ]
+const BACKFILL_ROWS = [
+  ['SR-LEGACY-20260822190342-001','9874200960','B'],
+  ['SR-LEGACY-20260822190342-002','9832477035','B'],
+  ['SR-LEGACY-20260822190342-003','9831145521','K'],
+  ['SR-LEGACY-20260822190342-004','9830291919','B'],
+  ['SR-LEGACY-20260822190342-005','9831437283','B'],
+  ['SR-LEGACY-20260822190342-006','8777580587','B'],
+  ['SR-LEGACY-20260822190342-007','9771492700','B'],
+  ['SR-LEGACY-20260822190342-008','9331930991','B'],
+  ['SR-LEGACY-20260822190342-009','8503943337','B'],
+  ['SR-LEGACY-20260822190342-010','8100857053','B'],
+  ['SR-LEGACY-20260822190342-011','9831067151','B'],
+  ['SR-LEGACY-20260822190342-012','9836457888','W'],
+  ['SR-LEGACY-20260822190342-013','9830891919','B'],
+  ['SR-LEGACY-20260822190342-014','9836909796','B'],
+  ['SR-LEGACY-20260822190342-015','9339651004','B'],
+  ['SR-LEGACY-20260822190342-016','9163630667','B'],
+  ['SR-LEGACY-20260822190342-017','7003960639',''],
+  ['SR-LEGACY-20260822190342-018','9007218568','K'],
+  ['SR-LEGACY-20260822190342-019','9051088000','B'],
+  ['SR-LEGACY-20260822190342-020','9007990055','B'],
+  ['SR-LEGACY-20260822190342-023','','B'],
+  ['SR-LEGACY-20260822190342-024','9836049999','W'],
+  ['SR-LEGACY-20260822190342-025','9007257485','B'],
+  ['SR-LEGACY-20260822190342-027','9836730730','B'],
+  ['SR-LEGACY-20260822190342-030','9051525176','B'],
+  ['SR-LEGACY-20260822190342-031','9831170670','B'],
+  ['SR-LEGACY-20260822190342-032','9836823272','B'],
+  ['SR-LEGACY-20260822190342-033','8479949205','B'],
+  ['SR-LEGACY-20260822190342-034','8013028282','W'],
+  ['SR-LEGACY-20260822190342-035','9864511361','B'],
+  ['SR-LEGACY-20260822190342-037','9433066136','B'],
+  ['SR-LEGACY-20260822190342-038','9830956771','B'],
+  ['SR-LEGACY-20260822190342-041','9831070480','B'],
+  ['SR-LEGACY-20260822190342-042','9830645573','B'],
+  ['SR-LEGACY-20260822190342-043','9830008531','B'],
+  ['SR-LEGACY-20260822190342-044','8335800044','B'],
+  ['SR-LEGACY-20260822190342-045','9836432398','W'],
+  ['SR-LEGACY-20260822190342-047','9674367691','W'],
+  ['SR-LEGACY-20260822190342-049','9836000871','B'],
+  ['SR-LEGACY-20260822190342-050','8017006806','B'],
+  ['SR-LEGACY-20260822190342-051','9830454004','B'],
+  ['SR-LEGACY-20260822190342-052','9831003060','B'],
+  ['SR-LEGACY-20260822190342-053','','K'],
+  ['SR-LEGACY-20260822190342-055','9903923420','B'],
+  ['SR-LEGACY-20260822190342-056','9831852442','B'],
+  ['SR-LEGACY-20260822190342-058','8697917006','B'],
+  ['SR-LEGACY-20260822190342-059','9831007006','B'],
+  ['SR-LEGACY-20260822190342-060','9903234744','B'],
+  ['SR-LEGACY-20260822190342-063','9831179197','W'],
+  ['SR-LEGACY-20260822190342-065','9883201544','B'],
+  ['SR-LEGACY-20260822190342-066','8240580641','B'],
+  ['SR-LEGACY-20260822190342-067','9874184400','B'],
+  ['SR-LEGACY-20260822190342-068','9836344607','B'],
+  ['SR-LEGACY-20260822190342-069','9830369898','B'],
+  ['SR-LEGACY-20260822190342-071','','B'],
+  ['SR-LEGACY-20260822190342-072','9748078246','B'],
+  ['SR-LEGACY-20260822190342-073','9748169625','B'],
+  ['SR-LEGACY-20260822190342-074','9831569501','B'],
+  ['SR-LEGACY-20260822190342-076','9501911223','W'],
+  ['SR-LEGACY-20260822190342-077','','B'],
+  ['SR-LEGACY-20260822190342-079','8902270303','B'],
+  ['SR-LEGACY-20260822190342-081','9051077655','B'],
+  ['SR-LEGACY-20260822190342-082','6292300179','B'],
+  ['SR-LEGACY-20260822190342-083','8697146249','B'],
+  ['SR-LEGACY-20260822190342-087','9830269473','W'],
+  ['SR-LEGACY-20260822190342-088','9830391691','B'],
+  ['SR-LEGACY-20260822190342-090','9830933807','B'],
+  ['SR-LEGACY-20260822190342-093','7439292764','B'],
+  ['SR-LEGACY-20260822190342-094','9874427231','W'],
+  ['SR-LEGACY-20260822190342-095','8335078886','B'],
+  ['SR-LEGACY-20260822190342-096','9874820673','B'],
+  ['SR-LEGACY-20260822190342-097','9836274412','B'],
+  ['SR-LEGACY-20260822190342-098','9831383538','B'],
+  ['SR-LEGACY-20260822190342-099','9830933807','B'],
+  ['SR-LEGACY-20260822190342-100','9674430110','B'],
+  ['SR-LEGACY-20260822190342-101','9703224015','B'],
+  ['SR-LEGACY-20260822190342-102','9903309035','W'],
+  ['SR-LEGACY-20260822190342-103','9330034122','B'],
+  ['SR-LEGACY-20260822190342-104','9330098950','W'],
+  ['SR-LEGACY-20260822190342-105','9831690455','B'],
+  ['SR-LEGACY-20260822190342-106','9831389889','B'],
+  ['SR-LEGACY-20260822190342-107','9800074519','B'],
+  ['SR-LEGACY-20260822190342-108','9831331700','B'],
+  ['SR-LEGACY-20260822190342-109','9831017945','B'],
+  ['SR-LEGACY-20260822190342-110','9674538131','W'],
+  ['SR-LEGACY-20260822190342-113','8697223580','B'],
+  ['SR-LEGACY-20260822190342-114','9339035669','B'],
+  ['SR-LEGACY-20260822190342-116','9830473146','B'],
+  ['SR-LEGACY-20260822190342-117','9831134748','W'],
+  ['SR-LEGACY-20260822190342-119','9831021726','W'],
+  ['SR-LEGACY-20260822190342-120','9830473146','B'],
+  ['SR-LEGACY-20260822190342-121','8017920925','B'],
+  ['SR-LEGACY-20260822190342-122','7980963451','B'],
+  ['SR-LEGACY-20260822190342-123','9674298399','B'],
+  ['SR-LEGACY-20260822190342-124','8697544060','K'],
+  ['SR-LEGACY-20260822190342-125','9831061568','W'],
+  ['SR-LEGACY-20260822190342-126','9836133108','B'],
+  ['SR-LEGACY-20260822190342-127','9830841000','W'],
+  ['SR-LEGACY-20260822190342-128','9830308103','B'],
+  ['SR-LEGACY-20260822190342-129','9830897474','B'],
+  ['SR-LEGACY-20260822190342-130','7259821493','K'],
+  ['SR-LEGACY-20260822190342-131','8334910337','W'],
+  ['SR-LEGACY-20260822190342-132','9903204764','B'],
+  ['SR-LEGACY-20260822190342-133','9408773418','B'],
+  ['SR-LEGACY-20260822190342-134','9830636708','K'],
+  ['SR-LEGACY-20260822190342-135','7980332890','W'],
+  ['SR-LEGACY-20260822190342-136','9331457034','B'],
+  ['SR-LEGACY-20260822190342-137','9903575529','B'],
+  ['SR-LEGACY-20260822190342-140','9591475544','W'],
+  ['SR-LEGACY-20260822190342-141','8910864743','W'],
+  ['SR-LEGACY-20260822190342-144','9051931216','B'],
+  ['SR-LEGACY-20260822190342-145','9830411388','B'],
+  ['SR-LEGACY-20260822190342-146','9830601547','W'],
+  ['SR-LEGACY-20260822190342-147','9831433233','W'],
+  ['SR-LEGACY-20260822190342-148','9831634009','B'],
+  ['SR-LEGACY-20260822190342-150','9903444625','W'],
+  ['SR-LEGACY-20260822190342-152','9830135011','W'],
+  ['SR-LEGACY-20260822190342-154','9748567667','B'],
+  ['SR-LEGACY-20260822190342-155','9874447971','W'],
+  ['SR-LEGACY-20260822190342-156','9831865885','K'],
+  ['SR-LEGACY-20260822190342-157','9836369290','B'],
+  ['SR-LEGACY-20260822190342-158','6290366306','W'],
+  ['SR-LEGACY-20260822190342-159','9830669060','B'],
+  ['SR-LEGACY-20260822190342-160','9831007006','B'],
+  ['SR-LEGACY-20260822190342-161','9830273046','B'],
+  ['SR-LEGACY-20260822190342-162','9831004584','B'],
+  ['SR-LEGACY-20260822190342-163','9674570816','W'],
+  ['SR-LEGACY-20260822190342-164','9007295354','W'],
+  ['SR-LEGACY-20260822190342-165','9007514442','K'],
+  ['SR-LEGACY-20260822190342-166','','B'],
+  ['SR-LEGACY-20260822190342-167','9674147895','B'],
+  ['SR-LEGACY-20260822190342-168','9831146607','B'],
+  ['SR-LEGACY-20260822190342-169','9830955545','B'],
+  ['SR-LEGACY-20260822190342-170','8777246437','B'],
+  ['SR-LEGACY-20260822190342-171','7503888080','K'],
+  ['SR-LEGACY-20260822190342-172','9883819832','B'],
+  ['SR-LEGACY-20260822190342-174','9726877650','W'],
+  ['SR-LEGACY-20260822190342-175','9051663671','B'],
+  ['SR-LEGACY-20260822190342-176','8100680214','B'],
+  ['SR-LEGACY-20260822190342-177','8240790627','B'],
+  ['SR-LEGACY-20260822190342-178','9831450861','B'],
+  ['SR-LEGACY-20260822190342-179','9830888754','B'],
+  ['SR-LEGACY-20260822190342-180','9830662720','B'],
+  ['SR-LEGACY-20260822190342-181','9836170170','B'],
+  ['SR-LEGACY-20260822190342-182','8981494136','B'],
+  ['SR-LEGACY-20260822190342-183','','B'],
+  ['SR-LEGACY-20260822190342-184','8334839970','W'],
+  ['SR-LEGACY-20260822190342-185','8583069499','W'],
+  ['SR-LEGACY-20260822190342-186','7890967226','B'],
+  ['SR-LEGACY-20260822190342-187','9903511111','B'],
+  ['SR-LEGACY-20260822190342-188','','B'],
+  ['SR-LEGACY-20260822190342-190','8596000023','B'],
+  ['SR-LEGACY-20260822190342-191','9903288880','B'],
+  ['SR-LEGACY-20260822190342-194','9903291072','B'],
+  ['SR-LEGACY-20260822190342-195','9830126831','W'],
+  ['SR-LEGACY-20260822190342-196','9831159132','B'],
+  ['SR-LEGACY-20260822190342-200','9883201544','B'],
+  ['SR-LEGACY-20260822190342-201','','B'],
+  ['SR-LEGACY-20260822190342-204','9874479666','B'],
+  ['SR-LEGACY-20260822190342-205','9874382944','B'],
+  ['SR-LEGACY-20260822190342-206','9874691000','B'],
+  ['SR-LEGACY-20260822190342-207','9874479666','B'],
+  ['SR-LEGACY-20260822190342-208','8617724032','B'],
+  ['SR-LEGACY-20260822190342-209','9836384932','B'],
+  ['SR-LEGACY-20260822190342-210','9874769731','B'],
+  ['SR-LEGACY-20260822190342-212','9874082718','B'],
+  ['SR-LEGACY-20260822190342-213','8017843219','B'],
+  ['SR-LEGACY-20260822190342-216','9831392222','W'],
+  ['SR-LEGACY-20260822190342-217','9831119998','B'],
+  ['SR-LEGACY-20260822190342-219','9830015051','B'],
+  ['SR-LEGACY-20260822190342-220','9836344607','B'],
+  ['SR-LEGACY-20260822190342-221','9831199995','B'],
+  ['SR-LEGACY-20260822190342-222','9830580450','B'],
+  ['SR-LEGACY-20260822190342-223','9830828897','B'],
+  ['SR-LEGACY-20260822190342-224','9883010584','W'],
+  ['SR-LEGACY-20260822190342-225','9831681550','B'],
+  ['SR-LEGACY-20260822190342-227','9163925536','B'],
+  ['SR-LEGACY-20260822190342-228','9331774414','B'],
+  ['SR-LEGACY-20260822190342-230','9051851588','B'],
+  ['SR-LEGACY-20260822190342-231','7003986923','B'],
+  ['SR-LEGACY-20260822190342-232','9830669060','B'],
+  ['SR-LEGACY-20260822190342-233','9830828897','B'],
+  ['SR-LEGACY-20260822190342-234','8902645997','W'],
+  ['SR-LEGACY-20260822190342-235','9830076545','B'],
+  ['SR-LEGACY-20260822190342-236','7439218434','W'],
+  ['SR-LEGACY-20260822190342-238','9836828284','B'],
+  ['SR-LEGACY-20260822190342-239','9836334844','B'],
+  ['SR-LEGACY-20260822190342-240','9951357232','W'],
+  ['SR-LEGACY-20260822190342-241','','B'],
+  ['SR-LEGACY-20260822190342-242','9883495691','B'],
+  ['SR-LEGACY-20260822190342-243','9910623444','B'],
+  ['SR-LEGACY-20260822190342-244','9339376767','B'],
+  ['SR-LEGACY-20260822190342-248','8583042024','B'],
+  ['SR-LEGACY-20260822190342-249','9830971813','B'],
+  ['SR-LEGACY-20260822190342-250','9830222755','B'],
+  ['SR-LEGACY-20260822190342-251','9831152510','B'],
+  ['SR-LEGACY-20260822190342-252','9038927976','B'],
+  ['SR-LEGACY-20260822190342-253','7605044398','B'],
+  ['SR-LEGACY-20260822190342-254','9007319406','B'],
+  ['SR-LEGACY-20260822190342-255','9163895010','K'],
+  ['SR-LEGACY-20260822190342-256','9903714021','B'],
+  ['SR-LEGACY-20260822190342-257','7838021600','W'],
+  ['SR-LEGACY-20260822190342-259','9804070947','B'],
+  ['SR-LEGACY-20260822190342-260','9674288009','B'],
+  ['SR-LEGACY-20260822190342-261','9830761756','B'],
+  ['SR-LEGACY-20260822190342-262','9830077266','B'],
+  ['SR-LEGACY-20260822190342-263','9051115924','B'],
+  ['SR-LEGACY-20260822190342-265','9831445322','W'],
+  ['SR-LEGACY-20260822190342-267','','B'],
+  ['SR-LEGACY-20260822190342-268','8013648775','B'],
+  ['SR-LEGACY-20260822190342-269','9830766560','B'],
+  ['SR-LEGACY-20260822190342-270','9831063364','W'],
+  ['SR-LEGACY-20260822190342-271','9674456791','W'],
+  ['SR-LEGACY-20260822190342-272','9831005444','W'],
+  ['SR-LEGACY-20260822190342-275','9831669994','B'],
+  ['SR-LEGACY-20260822190342-276','9830977744','B'],
+  ['SR-LEGACY-20260822190342-277','7044669665','B'],
+  ['SR-LEGACY-20260822190342-278','9836694856','B'],
+  ['SR-LEGACY-20260822190342-279','9836811557','W'],
+  ['SR-LEGACY-20260822190342-280','8100283414','B'],
+  ['SR-LEGACY-20260822190342-281','9830704204','B'],
+  ['SR-LEGACY-20260822190342-282','9830612090','B'],
+  ['SR-LEGACY-20260822190342-283','9831255866','B'],
+  ['SR-LEGACY-20260822190342-284','9007082911','B'],
+  ['SR-LEGACY-20260822190342-285','9731861833','B'],
+  ['SR-LEGACY-20260822190342-286','9883392121','B'],
+  ['SR-LEGACY-20260822190342-287','8961878841','W'],
+  ['SR-LEGACY-20260822190342-290','9051533000','B'],
+  ['SR-LEGACY-20260822190342-291','9836318777','B'],
+  ['SR-LEGACY-20260822190342-292','9831020912','B'],
+  ['SR-LEGACY-20260822190342-293','9007488000','B'],
+  ['SR-LEGACY-20260822190342-295','9339266010','B'],
+  ['SR-LEGACY-20260822190342-296','8584916151','W'],
+  ['SR-LEGACY-20260822190342-298','9831936867','W'],
+  ['SR-LEGACY-20260822190342-299','9051615769','W'],
+  ['SR-LEGACY-20260822190342-300','9831726825','B'],
+  ['SR-LEGACY-20260822190342-301','9769165609','K'],
+  ['SR-LEGACY-20260822190342-303','9674322969','W'],
+  ['SR-LEGACY-20260822190342-305','7633999889','W'],
+  ['SR-LEGACY-20260822190342-306','9831911127','K'],
+  ['SR-LEGACY-20260822190342-307','9831094347','W'],
+  ['SR-LEGACY-20260822190342-308','9874084797','B'],
+  ['SR-LEGACY-20260822190342-309','9602266586','B'],
+  ['SR-LEGACY-20260822190342-310','9831584998','W'],
+  ['SR-LEGACY-20260822190342-311','8334941188','B'],
+  ['SR-LEGACY-20260822190342-312','7439109883','B'],
+  ['SR-LEGACY-20260822190342-313','9831077873','W'],
+  ['SR-LEGACY-20260822190342-314','9903291072','B'],
+  ['SR-LEGACY-20260822190342-316','9831740000','B'],
+  ['SR-LEGACY-20260822190342-317','9836800883','B'],
+  ['SR-LEGACY-20260822190342-318','9831180652','S'],
+  ['SR-LEGACY-20260822190342-319','9830371000','B'],
+  ['SR-LEGACY-20260822190342-320','9831231164','W'],
+  ['SR-LEGACY-20260822190342-321','9831473814','B'],
+  ['SR-LEGACY-20260822190342-322','7044770744','W'],
+  ['SR-LEGACY-20260822190342-323','9038046112',''],
+  ['SR-LEGACY-20260822190342-324','8830704011','B'],
+  ['SR-LEGACY-20260822190342-326','','W'],
+  ['SR-LEGACY-20260822190342-327','9330028293','B'],
+  ['SR-LEGACY-20260822190342-328','9035293711','B'],
+  ['SR-LEGACY-20260822190342-329','9748380829','B'],
+  ['SR-LEGACY-20260822190342-331','9007514442','K'],
+  ['SR-LEGACY-20260822190342-332','9943970987','B'],
+  ['SR-LEGACY-20260822190342-334','9830601547','W'],
+  ['SR-LEGACY-20260822190342-335','9836395511','W'],
+  ['SR-LEGACY-20260822190342-336','9681109022','B'],
+  ['SR-LEGACY-20260822190342-337','9836154999','B'],
+  ['SR-LEGACY-20260822190342-338','9903878777','B'],
+  ['SR-LEGACY-20260822190342-339','9831846002','W'],
+  ['SR-LEGACY-20260822190342-342','9831506456','W'],
+  ['SR-LEGACY-20260822190342-345','9711716621','W']
+];
+
+// Shared by the preview and the apply so they can never disagree about what
+// would change. Writes nothing.
+function planContactBackfill_() {
+  const sheet = getSheet('Enrollments');
+  const data  = sheet.getDataRange().getValues();
+  const norm  = function (v) { return (v === null || v === undefined) ? '' : v.toString().trim(); };
+  const head  = data[0].map(norm);
+
+  const iId   = head.indexOf('ID');
+  const iName = head.indexOf('Student Name');
+  const iPh   = head.indexOf('Phone');
+  const iWa   = head.indexOf('WhatsApp');
+  const iLoc  = head.indexOf('Location');
+  const iStat = head.indexOf('Status');
+  if (iId < 0 || iPh < 0 || iLoc < 0) {
+    return { fatal: 'Enrollments is missing ID, Phone or Location. Nothing was read.' };
+  }
+
+  const rowOf = {};
+  for (let r = 1; r < data.length; r++) {
+    const id = norm(data[r][iId]);
+    if (id) rowOf[id] = r;
+  }
+
+  const plan = { phone: [], centre: [], skipped: [], missing: [] };
+  BACKFILL_ROWS.forEach(function (b) {
+    const id = b[0], phone = b[1], centre = BACKFILL_CENTRES[b[2]] || '';
+    const r = rowOf[id];
+    if (r === undefined) { plan.missing.push({ id: id, why: 'no such ID in Enrollments' }); return; }
+    const row  = data[r];
+    const name = iName >= 0 ? norm(row[iName]) : '';
+
+    if (iStat >= 0 && isLeftWord_(norm(row[iStat]))) {
+      plan.skipped.push({ id: id, name: name, why: 'has left' }); return;
+    }
+    // Fill blanks; never overwrite. Someone may have typed a number in by hand
+    // since the export, and theirs is the newer fact.
+    if (phone) {
+      const has = norm(row[iPh]) || (iWa >= 0 ? norm(row[iWa]) : '');
+      if (has) plan.skipped.push({ id: id, name: name, why: 'phone already set to ' + has });
+      else plan.phone.push({ id: id, name: name, row: r + 1, col: iPh + 1, val: phone });
+    }
+    if (centre) {
+      const has = norm(row[iLoc]);
+      if (has) plan.skipped.push({ id: id, name: name, why: 'centre already set to ' + has });
+      else plan.centre.push({ id: id, name: name, row: r + 1, col: iLoc + 1, val: centre });
+    }
+  });
+  return plan;
+}
+
+function previewContactBackfill() {
+  const p = planContactBackfill_();
+  if (p.fatal) { Logger.log(p.fatal); return p.fatal; }
+  let out = 'PHONE AND CENTRE BACKFILL - PREVIEW\n===================================\n';
+  out += 'Rows in the import list : ' + BACKFILL_ROWS.length + '\n';
+  out += 'Phone numbers to write  : ' + p.phone.length + '\n';
+  out += 'Centres to write        : ' + p.centre.length + '\n';
+  out += 'Left alone              : ' + p.skipped.length + '\n';
+  out += 'IDs not found           : ' + p.missing.length + '\n\n';
+
+  if (p.missing.length) {
+    out += 'NOT FOUND IN ENROLLMENTS\n';
+    p.missing.forEach(function (m) { out += '  ' + pad_(m.id, 34) + m.why + '\n'; });
+    out += '\n';
+  }
+  if (p.skipped.length) {
+    out += 'ALREADY SET, SO LEFT ALONE (' + p.skipped.length + ')\n';
+    p.skipped.slice(0, 40).forEach(function (s) {
+      out += '  ' + pad_(s.name || s.id, 26) + s.why + '\n';
+    });
+    if (p.skipped.length > 40) out += '  ...and ' + (p.skipped.length - 40) + ' more\n';
+    out += '\n';
+  }
+  out += 'FIRST 25 PHONE WRITES\n';
+  p.phone.slice(0, 25).forEach(function (x) {
+    out += '  row ' + pad_(x.row.toString(), 6) + pad_(x.name, 26) + x.val + '\n';
+  });
+  out += '\nFIRST 25 CENTRE WRITES\n';
+  p.centre.slice(0, 25).forEach(function (x) {
+    out += '  row ' + pad_(x.row.toString(), 6) + pad_(x.name, 26) + x.val + '\n';
+  });
+  out += '\nNothing was changed. Run applyContactBackfill() when this looks right.\n';
+  Logger.log(out);
+  return out;
+}
+
+function applyContactBackfill() {
+  const p = planContactBackfill_();
+  if (p.fatal) { Logger.log(p.fatal); return p.fatal; }
+  const sheet = getSheet('Enrollments');
+
+  p.phone.forEach(function (x)  { sheet.getRange(x.row, x.col).setValue(x.val); });
+  p.centre.forEach(function (x) { sheet.getRange(x.row, x.col).setValue(x.val); });
+  SpreadsheetApp.flush();
+
+  let out = 'PHONE AND CENTRE BACKFILL - DONE\n================================\n';
+  out += 'Phone numbers written : ' + p.phone.length + '\n';
+  out += 'Centres written       : ' + p.centre.length + '\n';
+  out += 'Left alone            : ' + p.skipped.length + '\n';
+  out += 'IDs not found         : ' + p.missing.length + '\n\n';
+  out += 'Blanks only. Nothing that already held a value was touched.\n';
+  out += 'Re-running is safe: the cells are no longer blank, so it does nothing.\n';
+  Logger.log(out);
+  return out;
+}

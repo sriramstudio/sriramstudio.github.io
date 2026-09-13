@@ -414,6 +414,15 @@ click Run, then read the **Execution log**.
 | `dropEmptyOverflowColumns` | Removes unheadered columns past `Notes`, but only once they are empty. |
 | `previewJoiningBackfill` | Shows which enrolments would get a joining month from their enrolment date. Writes nothing. |
 | `backfillJoiningMonth` | Fills those in. Blank cells only; never overwrites. |
+| `previewContactBackfill` | Shows which legacy rows would get a phone and a centre from the September 2026 phonebook import. Writes nothing. |
+| `applyContactBackfill` | Writes them. Blank cells only; skips students who have left; safe to re-run. |
+
+> **The contact backfill is a one-off (September 2026).** Built from Anjali's
+> phonebook export matched against the roster, with every ambiguous case decided
+> by hand in `Phone Backfill Review.xlsx`. The `BACKFILL_ROWS` block near the end
+> of `Code.gs` is the record of that import — once applied and verified it can be
+> deleted, as it is not part of the running system. Students marked
+> "None - leave blank" during review were deliberately left out.
 
 Every one of these was written for a specific one-off job and left in place in
 case the same problem recurs. The `preview` half of each pair always writes

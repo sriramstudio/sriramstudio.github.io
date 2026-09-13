@@ -4,3 +4,14 @@
 
 # Local clasp project pointer (holds the script id); see README section 3
 .clasp.json
+
+# ── Personal data: NEVER commit. This repo is public. ──
+# Working files holding students' names, phone numbers, dates of birth and
+# addresses. They live in the project folder for convenience; publishing one
+# cannot be undone, because a git history keeps it even after a later delete.
+*.xlsx
+*.xls
+*.csv
+Anjali_Contacts.xlsx
+Sriram Studio Records - Enrollments.csv
+Phone Backfill Review.xlsx
