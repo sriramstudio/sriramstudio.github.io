@@ -36,12 +36,17 @@ function makeSheet(rows) {
           return out;
         },
         setFontWeight: () => range, setBackground: () => range, setFontColor: () => range,
+        setVerticalAlignment: () => range, setWrap: () => range,
+        setNumberFormat: () => range, setDataValidation: () => range,
         getNote: () => notes[r + ':' + c] || '',
         setNote: v => { notes[r + ':' + c] = v; return range; }
       };
       return range;
     },
-    setFrozenRows() {}, setColumnWidth() {}
+    setFrozenRows() {}, setColumnWidth() {},
+    getMaxRows: () => Math.max(data.length, 1),
+    getMaxColumns: () => Math.max(data.reduce((m, r) => Math.max(m, r.length), 0), 1),
+    insertColumnsAfter() {}, clear() { data.length = 0; }
   };
 }
 
@@ -1252,7 +1257,8 @@ check('  ...and the non-tuition receipts are counted as skipped, not lost',
 // The dropdown is the only list of fee types anywhere.
 var adminHtml = fs.readFileSync('sriramstudio_admin.html', 'utf8');
 var opts = (adminHtml.match(/<select id="r-feetype"[\s\S]*?<\/select>/) || [''])[0];
-['Monthly Fee', 'Registration Fee', 'Uniform / Costume Fee', 'Late Fee', 'Workshop', 'Other']
+['Monthly Fee', 'Registration Fee', 'Uniform / Costume Fee', 'Annual Show Fee',
+ 'Late Fee', 'Workshop', 'Other']
   .forEach(function (t) {
     check('the panel offers "' + t + '"', opts.indexOf('>' + t + '<') >= 0, opts);
   });
@@ -1265,7 +1271,7 @@ var gsCode = fs.readFileSync(SRC, 'utf8')
   .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
 // 'Workshop' and 'Other' are left out: they are also Enrollments *Type*
 // values, which Code.gs legitimately does name, and the words collide.
-['Registration Fee', 'Uniform / Costume Fee', 'Late Fee']
+['Registration Fee', 'Uniform / Costume Fee', 'Annual Show Fee', 'Late Fee']
   .forEach(function (t) {
     check('Code.gs does not branch on "' + t + '"',
           gsCode.indexOf("'" + t + "'") < 0 && gsCode.indexOf('"' + t + '"') < 0,
@@ -1651,6 +1657,193 @@ var recent = mdl.students.rows.filter(function (r) { return r[2] === 'Normal Kid
 var prevIdx = mdl.firstMonthCol - 1 + mdl.monthNames.indexOf(prevLabel);
 check('a paid month still reads PAID after windowing',
       recent[prevIdx] === 'PAID', recent[prevIdx]);
+
+// ─── Holds, gaps, and the status diary ────────────────────────
+// A paused student must not read as a defaulter, and must still not read as
+// one after they come back — the record of the pause is what makes that true.
+console.log('');
+console.log('--- months a student is not liable for ---');
+
+var exHd = ['Student ID', 'Student Name', 'Type', 'From Month', 'To Month',
+            'Expected Return', 'Reason', 'Approved By', 'Approved On', 'Note', 'Recorded At'];
+var exRow = function (id, name, type, from, to, expect) {
+  return [id, name, type, from || '', to || '', expect || '', '', '', '', '', ''];
+};
+
+// One student, due Jan-Jun 2026, paid only January.
+var holdWorld = function (exRows) {
+  var wv = freshWorld('1234');
+  var d = dRow('SR-H1', 'Hold Kid', '9000000009');
+  d[15] = 'January 2026';                       // Joining Date
+  wv.sheets.Enrollments = makeSheet([dh, d]);
+  wv.sheets.Receipts = makeSheet([rhd,
+    ['SS-H1', '05 Jan 2026', 'Hold Kid', '9000000009', '2000', 'January', '2026',
+     'Cash', '', 'Monthly Fee', '', '', 'Hold Kid']
+  ]);
+  if (exRows) wv.sheets['Fee Exemptions'] = makeSheet([exHd].concat(exRows));
+  return wv;
+};
+
+var monthsMissing = function (wv) {
+  var cov = wv.sandbox.buildFeeCoverage_();
+  var s = cov.students.filter(function (x) { return x.name === 'Hold Kid'; })[0];
+  if (!s) return null;
+  var out = [];
+  for (var p = s.start; p <= s.end; p++) if (wv.sandbox.isDue_(s, p) && !s.paid[p]) out.push(p);
+  return { student: s, missing: out, cov: cov };
+};
+
+w = holdWorld(null);
+var before = monthsMissing(w);
+check('without any exemption every unpaid month is due',
+      before.missing.length > 0, before.missing.length + ' months missing');
+
+// February and March waived.
+w = holdWorld([exRow('SR-H1', 'Hold Kid', 'Hold', 'February 2026', 'March 2026')]);
+var after = monthsMissing(w);
+check('a closed hold removes exactly the months it covers',
+      before.missing.length - after.missing.length === 2,
+      [before.missing.length, after.missing.length]);
+check('  ...and the months outside it are still due',
+      after.missing.length > 0, after.missing.length);
+check('  ...the held months are not counted as due anywhere',
+      after.missing.every(function (p) {
+        return p !== w.sandbox.parsePeriod_('February 2026') &&
+               p !== w.sandbox.parsePeriod_('March 2026');
+      }), after.missing.map(function (p) { return w.sandbox.periodLong_(p); }));
+
+// The point of the whole design: the student is back, and the waived months
+// stay waived because the record of the pause outlived the pause.
+check('a returned student does not have old held months reappear',
+      after.student.onHold === false && after.missing.length === before.missing.length - 2,
+      { onHold: after.student.onHold, missing: after.missing.length });
+
+// An open hold runs to today and no further.
+w = holdWorld([exRow('SR-H1', 'Hold Kid', 'Hold', 'February 2026', '', '')]);
+var open = monthsMissing(w);
+check('an open hold excuses everything from its start',
+      open.missing.length === 0, open.missing.length + ' still missing');
+check('  ...and the student reads as on hold today',
+      open.student.onHold === true, open.student.onHold);
+check('  ...counted as on hold, not as active',
+      open.cov.counts.onHold === 1 && open.cov.counts.active === 0,
+      { onHold: open.cov.counts.onHold, active: open.cov.counts.active });
+
+// Two children can share a name; a hold belongs to one of them.
+w = freshWorld('1234');
+var dA = dRow('SR-T1', 'Twin Name', '9111100001'); dA[15] = 'January 2026';
+var dB = dRow('SR-T2', 'Twin Name', '9222200002'); dB[15] = 'January 2026';
+w.sheets.Enrollments = makeSheet([dh, dA, dB]);
+w.sheets.Receipts = makeSheet([rhd]);
+w.sheets['Fee Exemptions'] = makeSheet([exHd,
+  exRow('SR-T1', 'Twin Name', 'Hold', 'February 2026', '')]);
+var twins = w.sandbox.buildFeeCoverage_();
+var held = twins.students.filter(function (s) { return s.onHold; });
+check('a hold matched by ID applies to one child, not both',
+      held.length === 1 && held[0].id === 'SR-T1',
+      held.map(function (s) { return s.id; }));
+
+// Rows that cannot be read must say so rather than excuse the wrong months.
+w = holdWorld([exRow('SR-H1', 'Hold Kid', 'Hold', 'Nonsense', 'March 2026')]);
+var badEx = w.sandbox.readExemptions_();
+check('an unreadable From Month is reported, not guessed',
+      badEx.problems.length === 1 && badEx.rows.length === 0, badEx.problems);
+check('  ...and it excuses nothing',
+      monthsMissing(w).missing.length === before.missing.length,
+      monthsMissing(w).missing.length);
+
+w = holdWorld([exRow('SR-H1', 'Hold Kid', 'Hold', 'May 2026', 'February 2026')]);
+check('a To Month before the From Month is rejected',
+      w.sandbox.readExemptions_().problems.length === 1,
+      w.sandbox.readExemptions_().problems);
+
+// Open past the expected return: every month since is being excused silently.
+w = holdWorld([exRow('SR-H1', 'Hold Kid', 'Hold', 'February 2026', '', 'March 2026')]);
+var chase = w.sandbox.previewExemptions();
+check('a hold open past its expected return is chased',
+      chase.indexOf('OPEN PAST THE EXPECTED RETURN') >= 0,
+      chase.split('\n').slice(0, 8));
+
+console.log('');
+console.log('--- the status diary tells a slip from a departure ---');
+
+var histHd = ['When', 'Row', 'Student ID', 'Student Name', 'Field', 'From', 'To',
+              'Edited By', 'Looks like', 'Actually', 'Note'];
+
+var diaryWorld = function (rows) {
+  var wv = freshWorld('1234');
+  wv.sheets.Enrollments = makeSheet([dh, dRow('SR-D1', 'Diary Kid', '9000000010')]);
+  wv.sheets['Status History'] = makeSheet([histHd].concat(rows || []));
+  return wv;
+};
+var hRow = function (when, kind, said) {
+  return [when, 2, 'SR-D1', 'Diary Kid', 'Status', 'Active', 'Left', '', kind, said || '', ''];
+};
+
+// Marked Left by mistake and put back minutes later.
+w = diaryWorld([hRow(new Date(Date.now() - 5 * 60000), 'Left')]);
+check('an undone Left minutes later reads as a correction',
+      w.sandbox.guessStatusKind_(w.sheets['Status History'],
+        { field: 'Status', from: 'Left', to: 'Active', id: 'SR-D1', name: 'Diary Kid' })
+        === 'Correction', 'not read as a correction');
+
+// Left in August, back in December.
+w = diaryWorld([hRow(new Date(Date.now() - 120 * 24 * 3600000), 'Left')]);
+check('a Left undone four months later reads as a rejoin',
+      w.sandbox.guessStatusKind_(w.sheets['Status History'],
+        { field: 'Status', from: 'Left', to: 'Active', id: 'SR-D1', name: 'Diary Kid' })
+        === 'Rejoined', 'not read as a rejoin');
+
+// A human verdict outranks the script's own earlier guess.
+w = diaryWorld([hRow(new Date(Date.now() - 5 * 60000), 'Left', 'Left')]);
+check('the human column is what a later reading believes',
+      w.sandbox.guessStatusKind_(w.sheets['Status History'],
+        { field: 'Status', from: 'Left', to: 'Active', id: 'SR-D1', name: 'Diary Kid' })
+        === 'Correction', 'human verdict ignored');
+
+check('marking someone Left is recorded as a departure',
+      w.sandbox.guessStatusKind_(w.sheets['Status History'],
+        { field: 'Status', from: 'Active', to: 'Left', id: 'SR-D1', name: 'Diary Kid' })
+        === 'Left', 'departure not recognised');
+
+check('a change that is not a status change is not a departure',
+      w.sandbox.guessStatusKind_(w.sheets['Status History'],
+        { field: 'Left On', from: '', to: 'August 2026', id: 'SR-D1', name: 'Diary Kid' })
+        === 'Other', 'Left On misread');
+
+// The rejoin whose away-months nobody recorded — billed for being absent.
+w = freshWorld('1234');
+w.sheets.Enrollments = makeSheet([dh, dRow('SR-D1', 'Diary Kid', '9000000010')]);
+var leftAt = new Date(Date.now() - 150 * 24 * 3600000);
+var backAt = new Date(Date.now() - 20 * 24 * 3600000);
+w.sheets['Status History'] = makeSheet([histHd,
+  [leftAt, 2, 'SR-D1', 'Diary Kid', 'Status', 'Active', 'Left', '', 'Left', '', ''],
+  [backAt, 2, 'SR-D1', 'Diary Kid', 'Status', 'Left', 'Active', '', 'Rejoined', '', '']
+]);
+var gapRep = w.sandbox.previewRejoinGaps();
+check('a rejoin with no Gap row is surfaced',
+      gapRep.indexOf('Missing a Gap row          : 1') >= 0,
+      gapRep.split('\n').slice(0, 6));
+
+// ...and once the Gap is recorded, it stops being surfaced.
+w.sheets['Fee Exemptions'] = makeSheet([exHd,
+  exRow('SR-D1', 'Diary Kid', 'Gap (left and rejoined)',
+        w.sandbox.periodLong_(leftAt.getFullYear() * 12 + leftAt.getMonth()),
+        w.sandbox.periodLong_(backAt.getFullYear() * 12 + backAt.getMonth()))]);
+check('  ...and stops being surfaced once the Gap is recorded',
+      w.sandbox.previewRejoinGaps().indexOf('Missing a Gap row          : 0') >= 0,
+      w.sandbox.previewRejoinGaps().split('\n').slice(0, 6));
+
+// A Left that was corrected never happened, so it is not a rejoin to chase.
+w = freshWorld('1234');
+w.sheets.Enrollments = makeSheet([dh, dRow('SR-D1', 'Diary Kid', '9000000010')]);
+w.sheets['Status History'] = makeSheet([histHd,
+  [leftAt, 2, 'SR-D1', 'Diary Kid', 'Status', 'Active', 'Left', '', 'Left', '', ''],
+  [backAt, 2, 'SR-D1', 'Diary Kid', 'Status', 'Left', 'Active', '', 'Rejoined', 'Correction', '']
+]);
+check('a corrected Left is not chased as a rejoin',
+      w.sandbox.previewRejoinGaps().indexOf('Missing a Gap row          : 0') >= 0,
+      w.sandbox.previewRejoinGaps().split('\n').slice(0, 6));
 
 // ─── The duplicate guard at the point of issue ────────────────
 // The cache fingerprint only ever caught a retry inside its fifteen-minute

@@ -168,7 +168,8 @@ This is stored in the Google Sheet, NOT in code:
 - [ ] Upload admin file to GitHub
 
 Current fee types: **Monthly Fee**, **Registration Fee**,
-**Uniform / Costume Fee**, **Late Fee**, **Workshop**, **Other**
+**Uniform / Costume Fee**, **Annual Show Fee**, **Late Fee**, **Workshop**,
+**Other**
 
 The dropdown is the only list — nothing else in the code enumerates fee types,
 so adding one is a single edit. `Code.gs` never hardcodes the names; it asks
@@ -176,7 +177,8 @@ only whether a fee type *starts with* "Monthly".
 
 > **What that means for the analytics.** Only `Monthly Fee` (or a blank fee
 > type, for older receipts) makes a month count as paid. Registration, uniform,
-> late and workshop fees are money, but they are not a month's tuition, so they
+> late, annual-show and workshop fees are money, but they are not a month's
+> tuition, so they
 > are counted in revenue and deliberately excluded from fee coverage. A late fee
 > in particular must never mark a month paid — the late fee is the penalty, the
 > tuition is separate. If you ever add a fee type that *should* cover a month,
@@ -416,6 +418,74 @@ click Run, then read the **Execution log**.
 Every one of these was written for a specific one-off job and left in place in
 case the same problem recurs. The `preview` half of each pair always writes
 nothing — run it, read the log, and only then run its counterpart.
+
+---
+
+## 11-C. Left On, holds, and the status diary
+
+### `Left On` means the last month FEES ARE OWED FOR
+
+Not the date they stopped attending. If August is entered, August is expected
+and will show as pending until it is paid. A student who attended until early
+September but owed nothing beyond July gets **July** — the month she actually
+stopped coming is not what the sheet records.
+
+This was always how the code read it (`p <= s.end`, inclusive). It is written
+down here because the two readings look identical until they disagree.
+
+### Holds, gaps and waivers — the `Fee Exemptions` tab
+
+A hold (medical, exams — fees waived, no readmission charge) and the gap
+between leaving and rejoining are the same thing to the fee model: **months
+where nothing is owed**. One tab covers both.
+
+| Column | What goes in it |
+|--------|-----------------|
+| Student ID | The `SR-…` id. **Required when two students share a name** — a name-only row is refused in that case rather than excusing the wrong child. |
+| Student Name | For legibility. Used to match only when there is no ID. |
+| Type | `Hold`, `Gap (left and rejoined)`, or `Waiver`. |
+| From Month | First month not owed, e.g. `February 2026`. |
+| To Month | Last month not owed. **Leave blank while the pause is running**; fill it when they return. |
+| Expected Return | Optional. Drives the chasing report. |
+| Reason / Approved By / Approved On / Note | The history. |
+
+**Why the months stop reappearing.** The exclusion is a stored month range,
+not a flag on the student. Coming back does not erase it, so a month waived in
+March is still waived when you look in December. This is the whole design.
+
+An open row (blank `To Month`) excuses months up to today and never beyond, so
+an unclosed hold cannot excuse months that have not happened yet.
+
+### The `Status History` tab writes itself
+
+Editing `Status` or `Left On` in `Enrollments` by hand appends a line here
+automatically — when, which row, who, from what to what. Nothing to remember
+and nothing to double-enter.
+
+Two columns carry the judgement:
+
+- **Looks like** — the script's reading. A `Left` undone within three hours is
+  a `Correction`; undone months later it is a `Rejoined`. A guess, no more.
+- **Actually** — yours. The script never writes here and never overwrites it,
+  and where it is filled the reports believe it over the guess beside it.
+
+So a status mistakenly set and revised minutes later reads as a correction and
+is ignored; a genuine exit in August and return in December reads as a rejoin,
+and the row stays one row with its comings and goings in the diary.
+
+### The three menu entries
+
+| Menu item | What it does |
+|-----------|--------------|
+| **Set up the Holds and History tabs** | Creates both tabs with headers, notes and dropdowns. Safe to re-run; never touches a tab that already exists. Run this once. |
+| **Holds and gaps — what needs attention** | Unreadable rows, holds open past their expected return, holds open 4+ months with no return date. Writes nothing. |
+| **Rejoins with no gap recorded** | Students the diary shows leaving and returning, with no `Gap` row covering the months away — so the coverage report is billing them for being absent. Writes nothing. |
+
+### How a student on hold appears
+
+`On hold` is its own figure beside Active and Left, and held months show as
+`HOLD` in the student grid rather than `UNPAID` or blank — so a pause stays
+visible in the history instead of looking like full attendance.
 
 ---
 

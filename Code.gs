@@ -1698,6 +1698,7 @@ function analyticsReport() {
 
   out += 'PAYMENT COVERAGE (active monthly-fee students)\n';
   out += '  Active students                 ' + cov.counts.active + '\n';
+  out += '  On hold                         ' + cov.counts.onHold + '\n';
   out += '  Have at least one receipt       ' + billed.length + '\n';
   out += '  Never had a receipt             ' + neverBilled.length + '\n';
   out += '  Last paid 2+ months ago         ' + lapsed.length + '\n';
@@ -2450,6 +2451,322 @@ function periodLong_(p) {
   return MONTH_NAMES[p % 12] + ' ' + Math.floor(p / 12);
 }
 
+// ─── The diary: every status change, recorded as it happens ───
+// Asking Anjali to keep a second log by hand would fail the first busy week.
+// onEdit fires on the manual edit itself, so the history writes itself from
+// the act of changing the cell — nothing to remember, nothing to double-enter.
+//
+// Correction or a real departure? The script offers a reading and never more
+// than that: a Left undone the same day, with no month boundary crossed and
+// nothing paid in between, looks like a slip of the hand; a Left in August
+// reversed in December does not. Its guess goes in 'Looks like'. 'Actually'
+// is the human column — blank until someone fills it, never overwritten, and
+// it is what the reports believe.
+const HISTORY_TAB = 'Status History';
+
+const HISTORY_HEADERS = [
+  'When', 'Row', 'Student ID', 'Student Name', 'Field', 'From', 'To',
+  'Edited By', 'Looks like', 'Actually', 'Note'
+];
+
+const HISTORY_KINDS = ['Correction', 'Left', 'Rejoined', 'Other'];
+
+// Minutes within which an undone status change reads as a slip rather than a
+// decision. Deliberately short: a genuine rejoin days later must not qualify.
+const HISTORY_CORRECTION_MINS = 180;
+
+function ensureHistoryTab_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let tab = ss.getSheetByName(HISTORY_TAB);
+  if (!tab) {
+    tab = ss.insertSheet(HISTORY_TAB);
+    tab.getRange(1, 1, 1, HISTORY_HEADERS.length).setValues([HISTORY_HEADERS])
+       .setFontWeight('bold').setBackground('#2C1A0E').setFontColor('#FFFFFF');
+    tab.setFrozenRows(1);
+    tab.getRange(1, 9).setNote(
+      'What the script thinks this change was. A guess, nothing more.');
+    tab.getRange(1, 10).setNote(
+      'What it actually was. Yours to set; the script never writes here and\n' +
+      'never overwrites it. Where this is filled, the reports believe it\n' +
+      'rather than the guess beside it.');
+    tab.setColumnWidth(1, 150);
+    tab.setColumnWidth(4, 180);
+    tab.setColumnWidth(11, 260);
+  }
+  return tab;
+}
+
+// Simple trigger: fires on a person editing a cell, not on anything the
+// script writes. That is exactly the scope wanted — the roster edits Anjali
+// makes by hand are the ones worth a diary entry.
+function onEdit(e) {
+  try {
+    if (!e || !e.range) return;
+    const sheet = e.range.getSheet();
+    if (sheet.getName() !== 'Enrollments') return;
+    if (e.range.getNumRows() !== 1 || e.range.getNumColumns() !== 1) return;
+
+    const row = e.range.getRow();
+    if (row < 2) return;
+
+    const width = Math.max(1, sheet.getLastColumn());
+    const head  = sheet.getRange(1, 1, 1, width).getValues()[0]
+                       .map(function (v) { return (v === null ? '' : v.toString().trim()); });
+    const field = head[e.range.getColumn() - 1];
+    if (field !== 'Status' && field !== 'Left On') return;
+
+    const from = (e.oldValue === undefined || e.oldValue === null) ? '' : e.oldValue.toString().trim();
+    const to   = (e.value    === undefined || e.value    === null) ? '' : e.value.toString().trim();
+    if (from === to) return;
+
+    const rowVals = sheet.getRange(row, 1, 1, width).getValues()[0];
+    const at = function (name) {
+      const i = head.indexOf(name);
+      return (i >= 0 && rowVals[i] !== undefined && rowVals[i] !== null)
+             ? rowVals[i].toString().trim() : '';
+    };
+
+    let who = '';
+    try { who = Session.getActiveUser().getEmail() || ''; } catch (idErr) { who = ''; }
+
+    logStatusChange_({
+      row: row, id: at('ID'), name: at('Student Name'),
+      field: field, from: from, to: to, by: who
+    });
+  } catch (err) {
+    // A diary that breaks the sheet is worse than no diary. Swallow and move on.
+  }
+}
+
+function logStatusChange_(c) {
+  const tab = ensureHistoryTab_();
+  const kind = guessStatusKind_(tab, c);
+  tab.appendRow([
+    new Date(), c.row, c.id || '', c.name || '', c.field,
+    c.from || '(blank)', c.to || '(blank)', c.by || '', kind, '', ''
+  ]);
+}
+
+// What does this change look like, given what the diary already holds for
+// this student? Reads the most recent Status entry for them and compares.
+function guessStatusKind_(tab, c) {
+  if (c.field !== 'Status') return 'Other';
+
+  const wasLeft = isLeftWord_(c.from);
+  const nowLeft = isLeftWord_(c.to);
+  if (wasLeft === nowLeft) return 'Other';
+
+  if (nowLeft) return 'Left';
+
+  // Left → Active. Correction or rejoin? Find their last Left entry.
+  const last = lastStatusEntry_(tab, c, function (rec) { return rec.kind === 'Left'; });
+  if (!last) return 'Rejoined';
+
+  const mins = (new Date().getTime() - last.when.getTime()) / 60000;
+  if (mins <= HISTORY_CORRECTION_MINS) return 'Correction';
+  return 'Rejoined';
+}
+
+function lastStatusEntry_(tab, c, match) {
+  if (tab.getLastRow() < 2) return null;
+  const width = tab.getLastColumn();
+  const head  = tab.getRange(1, 1, 1, width).getValues()[0]
+                   .map(function (v) { return (v === null ? '' : v.toString().trim()); });
+  const iWhen = head.indexOf('When');
+  const iId   = head.indexOf('Student ID');
+  const iName = head.indexOf('Student Name');
+  const iKind = head.indexOf('Looks like');
+  const iSaid = head.indexOf('Actually');
+  if (iWhen < 0) return null;
+
+  const data = tab.getRange(2, 1, tab.getLastRow() - 1, width).getValues();
+  for (let r = data.length - 1; r >= 0; r--) {
+    const row = data[r];
+    const id   = iId   >= 0 ? (row[iId]   || '').toString().trim() : '';
+    const name = iName >= 0 ? (row[iName] || '').toString().trim() : '';
+    const sameStudent = (c.id && id) ? (id === c.id) : (normName_(name) === normName_(c.name));
+    if (!sameStudent) continue;
+
+    // A human verdict outranks the script's own earlier guess.
+    const said = iSaid >= 0 ? (row[iSaid] || '').toString().trim() : '';
+    const rec = {
+      when: (Object.prototype.toString.call(row[iWhen]) === '[object Date]')
+              ? row[iWhen] : new Date(row[iWhen]),
+      kind: said || (iKind >= 0 ? (row[iKind] || '').toString().trim() : '')
+    };
+    if (isNaN(rec.when.getTime())) continue;
+    if (match(rec)) return rec;
+  }
+  return null;
+}
+
+// ─── Months a student is not liable for ───────────────────────
+// A hold (medical, exams — Anjali waives the months, no readmission fee) and
+// the gap between leaving and rejoining are the same thing in the fee model:
+// a range of months where nothing is owed. One mechanism for both, so they
+// cannot drift apart. The range is stored, not derived from today's status —
+// which is what makes a resumed student stay settled: the record of the pause
+// outlives the pause, so old months never reappear as pending.
+const EXEMPT_TAB = 'Fee Exemptions';
+
+const EXEMPT_HEADERS = [
+  'Student ID', 'Student Name', 'Type', 'From Month', 'To Month',
+  'Expected Return', 'Reason', 'Approved By', 'Approved On', 'Note', 'Recorded At'
+];
+
+const EXEMPT_TYPES = ['Hold', 'Gap (left and rejoined)', 'Waiver'];
+
+function ensureExemptionsTab_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let tab = ss.getSheetByName(EXEMPT_TAB);
+  if (!tab) {
+    tab = ss.insertSheet(EXEMPT_TAB);
+    tab.getRange(1, 1, 1, EXEMPT_HEADERS.length).setValues([EXEMPT_HEADERS])
+       .setFontWeight('bold').setBackground('#2C1A0E').setFontColor('#FFFFFF');
+    tab.setFrozenRows(1);
+    tab.getRange(1, 3).setNote(
+      'Hold  = fees waived for these months, student returns, no readmission fee.\n' +
+      'Gap   = the months between leaving and rejoining.\n' +
+      'Waiver = fees written off for another reason.');
+    tab.getRange(1, 5).setNote(
+      'Leave BLANK while the pause is still running. Fill it in when they\n' +
+      'return. Months stay excluded either way — closing it just stops the\n' +
+      'exclusion running on for ever.');
+    tab.setColumnWidth(2, 180);
+    tab.setColumnWidth(3, 160);
+    tab.setColumnWidth(7, 220);
+  }
+  return tab;
+}
+
+// One parsed row. `to` of -1 means still open: excluded up to today, and the
+// chasing report lists it so an open hold is never forgotten.
+function readExemptions_() {
+  const ss  = SpreadsheetApp.getActiveSpreadsheet();
+  const tab = ss.getSheetByName(EXEMPT_TAB);
+  const out = { byId: {}, byKey: {}, rows: [], problems: [] };
+  if (!tab || tab.getLastRow() < 2) return out;
+
+  const norm = function (v) { return (v === null || v === undefined) ? '' : v.toString().trim(); };
+  const data = tab.getDataRange().getValues();
+  const head = data[0].map(norm);
+  const iId   = head.indexOf('Student ID');
+  const iName = head.indexOf('Student Name');
+  const iType = head.indexOf('Type');
+  const iFrom = head.indexOf('From Month');
+  const iTo   = head.indexOf('To Month');
+  const iExp  = head.indexOf('Expected Return');
+  const iWhy  = head.indexOf('Reason');
+
+  for (let r = 1; r < data.length; r++) {
+    const row = data[r];
+    const id   = iId   >= 0 ? norm(row[iId])   : '';
+    const name = iName >= 0 ? norm(row[iName]) : '';
+    if (!id && !name) continue;
+
+    const from = iFrom >= 0 ? parsePeriod_(row[iFrom]) : -1;
+    const toRaw = iTo >= 0 ? norm(row[iTo]) : '';
+    const to    = toRaw ? parsePeriod_(row[iTo]) : -1;
+    const rec = {
+      row: r + 1, id: id, name: name, key: normName_(name),
+      type: (iType >= 0 ? norm(row[iType]) : '') || 'Hold',
+      from: from, to: to, open: !toRaw,
+      expect: iExp >= 0 ? parsePeriod_(row[iExp]) : -1,
+      reason: iWhy >= 0 ? norm(row[iWhy]) : ''
+    };
+
+    // A month that cannot be read would silently excuse nothing, or the wrong
+    // months. Say so rather than let it pass.
+    if (from < 0) {
+      out.problems.push({ row: rec.row, who: name || id, what: 'From Month is blank or unreadable' });
+      continue;
+    }
+    if (toRaw && to < 0) {
+      out.problems.push({ row: rec.row, who: name || id, what: 'To Month is unreadable: "' + toRaw + '"' });
+      continue;
+    }
+    if (to >= 0 && to < from) {
+      out.problems.push({ row: rec.row, who: name || id, what: 'To Month is before From Month' });
+      continue;
+    }
+
+    // An ID pins the row to one child and nothing else. Only a row with no ID
+    // falls back to matching on name — otherwise Twin A's hold silently
+    // excuses Twin B, who is a different family paying different fees.
+    out.rows.push(rec);
+    if (id) (out.byId[id] = out.byId[id] || []).push(rec);
+    else if (rec.key) (out.byKey[rec.key] = out.byKey[rec.key] || []).push(rec);
+  }
+
+  // Overlapping ranges for one student are not wrong, but they usually mean a
+  // row was entered twice — worth a look.
+  const seen = {};
+  out.rows.forEach(function (a) {
+    const k = a.id || a.key;
+    (seen[k] = seen[k] || []).push(a);
+  });
+  Object.keys(seen).forEach(function (k) {
+    const list = seen[k];
+    for (let i = 0; i < list.length; i++) {
+      for (let j = i + 1; j < list.length; j++) {
+        const x = list[i], y = list[j];
+        const xEnd = x.to >= 0 ? x.to : 9999, yEnd = y.to >= 0 ? y.to : 9999;
+        if (x.from <= yEnd && y.from <= xEnd) {
+          out.problems.push({ row: x.row + ' and ' + y.row, who: x.name || x.id,
+                              what: 'two exemptions cover the same months' });
+        }
+      }
+    }
+  });
+
+  return out;
+}
+
+// Attach each student's exemptions. Matched on ID where the sheet has one —
+// two children sharing a name must not share a hold — and on name otherwise.
+function attachExemptions_(students, ex) {
+  const nameCount = {};
+  students.forEach(function (s) { nameCount[s.key] = (nameCount[s.key] || 0) + 1; });
+
+  students.forEach(function (s) {
+    const byId = s.id ? (ex.byId[s.id] || []) : [];
+    const byName = ex.byKey[s.key] || [];
+    // A name-only row where two children share that name cannot be assigned.
+    // Refuse it and say so rather than excuse the wrong child's months.
+    if (!byId.length && byName.length && nameCount[s.key] > 1) {
+      byName.forEach(function (e) {
+        ex.problems.push({ row: e.row, who: e.name,
+                           what: 'two students share this name — put the Student ID in the row' });
+      });
+      s.exempt = [];
+    } else {
+      s.exempt = byId.length ? byId : byName;
+    }
+    s.onHold = false;
+  });
+}
+
+// Is this month covered by a pause? An open range runs to today, never past
+// it, so an unclosed hold cannot excuse months that have not happened.
+function exemptAt_(s, period) {
+  const list = s.exempt || [];
+  for (let i = 0; i < list.length; i++) {
+    const e = list[i];
+    const end = e.to >= 0 ? e.to : periodNow_();
+    if (period >= e.from && period <= end) return e;
+  }
+  return null;
+}
+
+// THE due test. It used to be written out in five places; a sixth reading of
+// the same rule is how exemptions end up applying to one report and not
+// another. Everything asks this.
+function isDue_(s, period) {
+  if (!s.billable || s.start < 0) return false;
+  if (period < s.start || period > s.end) return false;
+  return !exemptAt_(s, period);
+}
+
 // 'March', 'Mar' and 'Sept' all mean the same month.
 function monthIndexLoose_(name) {
   const n = (name || '').toString().trim().toLowerCase();
@@ -2677,6 +2994,10 @@ function buildFeeCoverage_() {
   const eLeft = headerIndex_(eHead, 'Left On');
 
   const warnings = [];
+  const exemptions = readExemptions_();
+  exemptions.problems.forEach(function (p) {
+    warnings.push(EXEMPT_TAB + ' row ' + p.row + ' (' + p.who + '): ' + p.what);
+  });
 
   // ── The roster: the golden source ──
   const students = [], byKey = {};
@@ -2696,7 +3017,8 @@ function buildFeeCoverage_() {
       leftRaw: eLeft >= 0 ? norm(eData[r][eLeft]) : '',
       enrolled: eWhen >= 0 ? parsePeriod_(eData[r][eWhen]) : -1,
       paid: {}, receipts: 0, firstPaid: -1, lastPaid: -1,
-      start: -1, end: -1, billable: false
+      start: -1, end: -1, billable: false,
+      exempt: [], onHold: false
     };
     students.push(s);
     (byKey[s.key] = byKey[s.key] || []).push(s);
@@ -2716,6 +3038,8 @@ function buildFeeCoverage_() {
     s.end = s.left ? parsePeriod_(s.leftRaw) : nowP;
     if (s.end < 0) s.end = nowP;
   });
+
+  attachExemptions_(students, exemptions);
 
   // ── Configured equivalent spellings ──
   const aliasMap = {}, config = { equivalents: [], distinct: [] };
@@ -2834,7 +3158,7 @@ function buildFeeCoverage_() {
     }
     if (allowMonth && period >= 0) {
       const live = hits.filter(function (s) {
-        return s.start >= 0 && period >= s.start && period <= s.end;
+        return isDue_(s, period);
       });
       if (live.length === 1) return { how: 'by month', student: live[0], from: fragment };
     }
@@ -3157,6 +3481,9 @@ function buildFeeCoverage_() {
     }
     if (s.lastPaid > end) end = s.lastPaid;
     s.end = end;
+    // Paused right now: shown as its own figure rather than counted among the
+    // active students who simply have not paid yet.
+    s.onHold = !s.left && !!exemptAt_(s, now);
 
     if (s.billable && s.start >= 0 && s.start < firstPeriod) firstPeriod = s.start;
     if (s.billable && s.end > lastPeriod) lastPeriod = s.end;
@@ -3174,17 +3501,25 @@ function buildFeeCoverage_() {
   // ── Pass 3: month by month ──
   const months = [];
   for (let p = firstPeriod; p <= lastPeriod; p++) {
-    const expected = [], paid = [], unpaid = [], outside = [];
+    const expected = [], paid = [], unpaid = [], outside = [], held = [];
     students.forEach(function (s) {
       if (!s.billable || s.start < 0) return;
-      const due = p >= s.start && p <= s.end;
       const has = !!s.paid[p];
+      // Inside their window but excused: neither owed nor missing. Counted
+      // separately so a paused student never reads as a defaulter.
+      if (p >= s.start && p <= s.end && exemptAt_(s, p)) {
+        held.push(s);
+        if (has) outside.push(s);
+        return;
+      }
+      const due = isDue_(s, p);
       if (due) { expected.push(s); (has ? paid : unpaid).push(s); }
       else if (has) outside.push(s);
     });
     const st = periodStats[p] || { receipts: 0, amount: 0, unmatched: 0, ambiguous: 0, spanning: 0 };
     months.push({
       period: p, expected: expected, paid: paid, unpaid: unpaid, outside: outside,
+      held: held,
       receipts: st.receipts, amount: st.amount,
       unmatchedNames: st.unmatched, ambiguousNames: st.ambiguous,
       complete: expected.length > 0 && unpaid.length === 0 &&
@@ -3204,8 +3539,12 @@ function buildFeeCoverage_() {
       multiMonth: multiMonth, vagueMonth: vagueMonth, split: splitCount,
       roster: students.length,
       billable: students.filter(function (s) { return s.billable; }).length,
-      active: students.filter(function (s) { return s.billable && !s.left; }).length
-    }
+      active: students.filter(function (s) { return s.billable && !s.left && !s.onHold; }).length,
+      onHold: students.filter(function (s) { return s.billable && s.onHold; }).length,
+      exemptions: exemptions.rows.length,
+      exemptionsOpen: exemptions.rows.filter(function (e) { return e.open; }).length
+    },
+    exemptions: exemptions
   };
 }
 
@@ -3272,7 +3611,8 @@ function feeCoverageByMonth() {
   out += '  Rows in Enrollments             ' + cov.counts.roster + '\n';
   out += '  Monthly-fee students            ' + cov.counts.billable +
          '   (workshops and untouched applications excluded)\n';
-  out += '  ...of them active today         ' + cov.counts.active + '\n\n';
+  out += '  ...of them active today         ' + cov.counts.active + '\n';
+  out += '  ...of them on hold today        ' + cov.counts.onHold + '\n\n';
 
   out += 'RECEIPTS\n';
   out += '  Monthly-fee receipts read       ' + cov.counts.monthly + '\n';
@@ -3645,7 +3985,7 @@ function feeGapsByStudent() {
   cov.students.forEach(function (s) {
     if (!s.billable || s.start < 0) return;
     const missing = [];
-    for (let p = s.start; p <= s.end; p++) if (!s.paid[p]) missing.push(p);
+    for (let p = s.start; p <= s.end; p++) if (isDue_(s, p) && !s.paid[p]) missing.push(p);
     if (missing.length) rows.push({ s: s, missing: missing });
   });
   rows.sort(function (a, b) { return b.missing.length - a.missing.length; });
@@ -3789,6 +4129,10 @@ function onOpen() {
       .addItem('Two-month receipts report', 'showMultiMonth')
       .addItem('Fee gaps report', 'showFeeGaps')
       .addSeparator()
+      .addItem('Holds and gaps — what needs attention', 'showExemptions')
+      .addItem('Rejoins with no gap recorded', 'showRejoinGaps')
+      .addItem('Set up the Holds and History tabs', 'showHoldsSetup')
+      .addSeparator()
       .addItem('Duplicate receipt NUMBERS (writes nothing)', 'showDuplicateNumbers')
       .addItem('Duplicate receipts report (writes nothing)', 'showDuplicates')
       .addItem('Rebuild the Duplicate Review tab', 'showDuplicateReviewTab')
@@ -3812,7 +4156,181 @@ function report_(text) {
   return text;
 }
 
+// ─── Holds and gaps: what needs looking at ────────────────────
+// Read-only. Three things go wrong with exemptions and none of them announce
+// themselves: a month nobody can parse, a pause left open long after the
+// student came back, and a student who rejoined with no gap recorded — which
+// bills them for every month they were away.
+function previewExemptions() {
+  const ex  = readExemptions_();
+  const now = periodNow_();
+  let out = 'HOLDS, GAPS AND WAIVERS\n=======================\n';
+  out += 'Rows on the ' + EXEMPT_TAB + ' tab : ' + ex.rows.length + '\n';
+  out += 'Still open (no To Month)        : ' + ex.rows.filter(function (e) { return e.open; }).length + '\n\n';
+
+  if (ex.problems.length) {
+    out += 'ROWS THAT CANNOT BE USED (' + ex.problems.length + ')\n';
+    out += 'These excuse nothing until they are fixed.\n\n';
+    ex.problems.forEach(function (p) {
+      out += '  row ' + pad_(p.row.toString(), 10) + pad_(p.who || '(no name)', 24) + p.what + '\n';
+    });
+    out += '\n';
+  }
+
+  const overdue = ex.rows.filter(function (e) {
+    return e.open && e.expect >= 0 && e.expect < now;
+  });
+  if (overdue.length) {
+    out += 'OPEN PAST THE EXPECTED RETURN (' + overdue.length + ')\n';
+    out += 'Every month since is being excused. Close them, or move the date.\n\n';
+    overdue.forEach(function (e) {
+      out += '  row ' + pad_(e.row.toString(), 6) + pad_(e.name || e.id, 24) +
+             pad_('from ' + periodLabel_(e.from), 16) +
+             'expected back ' + periodLabel_(e.expect) + '\n';
+    });
+    out += '\n';
+  }
+
+  const longOpen = ex.rows.filter(function (e) {
+    return e.open && e.expect < 0 && (now - e.from) >= 4;
+  });
+  if (longOpen.length) {
+    out += 'OPEN FOUR MONTHS OR MORE, NO RETURN DATE (' + longOpen.length + ')\n';
+    out += 'No end and no expected end. Are they coming back, or did they leave?\n\n';
+    longOpen.forEach(function (e) {
+      out += '  row ' + pad_(e.row.toString(), 6) + pad_(e.name || e.id, 24) +
+             pad_('from ' + periodLabel_(e.from), 16) +
+             (now - e.from) + ' months\n';
+    });
+    out += '\n';
+  }
+
+  if (!ex.problems.length && !overdue.length && !longOpen.length) {
+    out += 'Nothing needs attention.\n\n';
+  }
+
+  out += 'Report only. Nothing was changed.\n';
+  Logger.log(out);
+  return out;
+}
+
+// Students who left and came back, where no Gap row covers the months in
+// between — so the coverage report is asking them for fees for months the
+// studio never expected. Reads the diary; falls back to the roster where the
+// diary predates a change.
+function previewRejoinGaps() {
+  const ss  = SpreadsheetApp.getActiveSpreadsheet();
+  const tab = ss.getSheetByName(HISTORY_TAB);
+  const ex  = readExemptions_();
+  let out = 'REJOINS WITH NO GAP RECORDED\n============================\n';
+
+  if (!tab || tab.getLastRow() < 2) {
+    out += 'The ' + HISTORY_TAB + ' tab is empty, so there is nothing to check\n';
+    out += 'yet. It fills itself as Status is edited from now on.\n\n';
+    out += 'Report only. Nothing was changed.\n';
+    Logger.log(out);
+    return out;
+  }
+
+  const norm  = function (v) { return (v === null || v === undefined) ? '' : v.toString().trim(); };
+  const width = tab.getLastColumn();
+  const head  = tab.getRange(1, 1, 1, width).getValues()[0].map(norm);
+  const iWhen = head.indexOf('When');
+  const iId   = head.indexOf('Student ID');
+  const iName = head.indexOf('Student Name');
+  const iKind = head.indexOf('Looks like');
+  const iSaid = head.indexOf('Actually');
+  const data  = tab.getRange(2, 1, tab.getLastRow() - 1, width).getValues();
+
+  // Walk forward, pairing each Left with the Rejoined that follows it.
+  const openLeft = {}, pairs = [];
+  data.forEach(function (row, i) {
+    const id   = iId   >= 0 ? norm(row[iId])   : '';
+    const name = iName >= 0 ? norm(row[iName]) : '';
+    const key  = id || normName_(name);
+    if (!key) return;
+    const kind = (iSaid >= 0 && norm(row[iSaid])) ? norm(row[iSaid])
+               : (iKind >= 0 ? norm(row[iKind]) : '');
+    const when = (Object.prototype.toString.call(row[iWhen]) === '[object Date]')
+                   ? row[iWhen] : new Date(norm(row[iWhen]));
+    if (isNaN(when.getTime())) return;
+
+    if (kind === 'Left') { openLeft[key] = { when: when, name: name, id: id, row: i + 2 }; }
+    else if (kind === 'Rejoined' && openLeft[key]) {
+      pairs.push({ left: openLeft[key], back: { when: when, row: i + 2 },
+                   name: name || openLeft[key].name, id: id || openLeft[key].id, key: key });
+      delete openLeft[key];
+    } else if (kind === 'Correction') {
+      delete openLeft[key];   // never happened
+    }
+  });
+
+  const missing = pairs.filter(function (p) {
+    const list = (p.id && ex.byId[p.id]) ? ex.byId[p.id] : (ex.byKey[normName_(p.name)] || []);
+    const leftP = p.left.when.getFullYear() * 12 + p.left.when.getMonth();
+    const backP = p.back.when.getFullYear() * 12 + p.back.when.getMonth();
+    if (backP - leftP < 2) return false;        // away less than a whole month
+    return !list.some(function (e) {
+      const end = e.to >= 0 ? e.to : periodNow_();
+      return e.from <= leftP + 1 && end >= backP - 1;
+    });
+  });
+
+  out += 'Exits paired with a return : ' + pairs.length + '\n';
+  out += 'Missing a Gap row          : ' + missing.length + '\n\n';
+
+  if (!missing.length) {
+    out += 'Every rejoin has its months accounted for.\n\n';
+  } else {
+    out += 'For each of these, add a row to ' + EXEMPT_TAB + ' with Type "Gap\n';
+    out += '(left and rejoined)" covering the months away. Until then the\n';
+    out += 'coverage report counts those months as unpaid.\n\n';
+    missing.forEach(function (p) {
+      const leftP = p.left.when.getFullYear() * 12 + p.left.when.getMonth();
+      const backP = p.back.when.getFullYear() * 12 + p.back.when.getMonth();
+      out += '  ' + pad_(p.name || p.id, 24) +
+             pad_('left ' + periodLabel_(leftP), 16) +
+             pad_('back ' + periodLabel_(backP), 16) +
+             'suggest ' + periodLabel_(leftP + 1) + ' - ' + periodLabel_(backP - 1) + '\n';
+    });
+    out += '\n';
+  }
+
+  out += 'Report only. Nothing was changed.\n';
+  Logger.log(out);
+  return out;
+}
+
+// Creates the two tabs if they are not there yet, with their headers, notes
+// and dropdowns. Safe to re-run: it never touches a tab that exists.
+function setUpHoldsAndHistory() {
+  const madeEx   = !SpreadsheetApp.getActiveSpreadsheet().getSheetByName(EXEMPT_TAB);
+  const madeHist = !SpreadsheetApp.getActiveSpreadsheet().getSheetByName(HISTORY_TAB);
+  const ex   = ensureExemptionsTab_();
+  const hist = ensureHistoryTab_();
+
+  // Dropdowns on the two columns where a typo would be silent.
+  ex.getRange(2, 3, Math.max(500, ex.getMaxRows() - 1), 1).setDataValidation(
+    SpreadsheetApp.newDataValidation()
+      .requireValueInList(EXEMPT_TYPES, true).setAllowInvalid(true).build());
+  hist.getRange(2, 10, Math.max(500, hist.getMaxRows() - 1), 1).setDataValidation(
+    SpreadsheetApp.newDataValidation()
+      .requireValueInList(HISTORY_KINDS, true).setAllowInvalid(true).build());
+
+  let out = 'SET UP\n======\n';
+  out += EXEMPT_TAB + ' : ' + (madeEx   ? 'created' : 'already there, left alone') + '\n';
+  out += HISTORY_TAB + '   : ' + (madeHist ? 'created' : 'already there, left alone') + '\n\n';
+  out += 'Dropdowns refreshed on Type and Actually.\n\n';
+  out += 'From now on, editing Status or Left On in Enrollments writes a line\n';
+  out += 'to ' + HISTORY_TAB + ' by itself. Nothing to remember.\n';
+  Logger.log(out);
+  return out;
+}
+
 // The report is the preview; the tab is the write. Run the report first.
+function showExemptions()          { return report_(previewExemptions()); }
+function showRejoinGaps()          { return report_(previewRejoinGaps()); }
+function showHoldsSetup()          { return report_(setUpHoldsAndHistory()); }
 function showDuplicateNumbers()    { return report_(previewDuplicateReceiptNumbers()); }
 function showDuplicates()          { return report_(findDuplicateReceipts()); }
 function showDuplicateReviewTab()  { return report_(buildDuplicateReviewTab()); }
@@ -3846,13 +4364,15 @@ function analyticsTabModel_(cov) {
     if (!s.billable || s.start < 0) return;
     let due = 0, paid = 0;
     const cells = months.map(function (m) {
-      const isDue = m.period >= s.start && m.period <= s.end;
+      const held  = !!exemptAt_(s, m.period);
+      const isDue = isDue_(s, m.period);
       const has = !!s.paid[m.period];
+      if (held) return has ? 'HOLD+PAID' : 'HOLD';
       if (isDue) { due++; if (has) { paid++; return 'PAID'; } return 'UNPAID'; }
       return has ? 'EXTRA' : '';
     });
     stuRows.push([s.row, s.id, s.name, s.centre || '', s.phone || '',
-                  s.left ? 'Left' : 'Active', s.joinRaw || '', s.leftRaw || '',
+                  s.left ? 'Left' : (s.onHold ? 'On hold' : 'Active'), s.joinRaw || '', s.leftRaw || '',
                   periodLong_(s.start), periodLong_(s.end),
                   due, paid, due - paid,
                   s.lastPaid >= 0 ? periodLong_(s.lastPaid) : 'never'].concat(cells));
@@ -3915,10 +4435,10 @@ function analyticsTabModel_(cov) {
   cov.students.forEach(function (s) {
     if (!s.billable || s.start < 0) return;
     const missing = [];
-    for (let p = s.start; p <= s.end; p++) if (!s.paid[p]) missing.push(periodLong_(p));
+    for (let p = s.start; p <= s.end; p++) if (isDue_(s, p) && !s.paid[p]) missing.push(periodLong_(p));
     if (!missing.length) return;
     gapRows.push([s.row, s.name, s.centre || '', s.phone || '',
-                  s.left ? 'Left' : 'Active', periodLong_(s.start), missing.length,
+                  s.left ? 'Left' : (s.onHold ? 'On hold' : 'Active'), periodLong_(s.start), missing.length,
                   s.lastPaid >= 0 ? periodLong_(s.lastPaid) : 'never',
                   missing.join(', ')]);
   });
@@ -4196,7 +4716,8 @@ function writeDashboard_(sh, model, nStu, nCov, firstCol, lastCol, when) {
 
   sh.getRange('D5').setValue('Roster').setFontWeight('bold');
   sh.getRange('E5').setValue(model.counts.roster + ' rows, ' + model.counts.billable +
-                             ' monthly-fee students, ' + model.counts.active + ' active today');
+                             ' monthly-fee students, ' + model.counts.active + ' active today' +
+                             (model.counts.onHold ? ', ' + model.counts.onHold + ' on hold' : ''));
   sh.getRange('D6').setValue('Receipts').setFontWeight('bold');
   sh.getRange('E6').setValue(model.counts.monthly + ' monthly receipts read, ' +
                              model.counts.otherType + ' other fee types skipped, ' +
