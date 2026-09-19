@@ -203,6 +203,7 @@ student database. Ten wrong attempts locks the endpoint for 15 minutes.
 
 - **Enroll tab** → 3 modes: New Admission, Workshop, Existing Student (for adding your current roster)
 - **Receipt tab** → Type a name and pick from the autocomplete; the student becomes a chip. **Pick more than one to club siblings onto a single receipt** — one amount, one receipt number, all names printed. Remove a chip with its ×. Typing a name without picking still works for someone not yet in the database. Then amount, fee type, date received, note → Generate → Copy for WhatsApp or Print/Save PDF
+- **Contact** fills itself from whoever is selected and empties when the last chip goes — it is never left holding the previous family's number. Siblings on one receipt share one number, so one box is enough; if two selected students have *different* numbers on record an amber line says so and names the one the receipt will carry. See §"Save this number to the record?" below
 - **Records tab** → view/search/filter all enrollments, applications, and receipts
 
 ### "This receipt already exists"
@@ -222,6 +223,39 @@ The check reads the sheet, so it holds however long ago the first receipt was
 issued. It is deliberately narrow — a **part payment, or a reissue at a
 corrected amount, will not ask**, because those differ in amount. Those are
 caught afterwards by the Duplicate Review tab (§11B-D).
+
+### "Save this number to the record?"
+
+Some students have no phone number on record. When Anjali types one on a
+receipt for such a student, Generate offers to keep it — and only then.
+
+- **Save to record** — the number is written to `Phone` in `Enrollments`, and
+  a line naming the change appears in `Status History`.
+- **Not now** — nothing is written. The receipt is issued either way.
+
+Two rules make this safe to leave switched on:
+
+- **It only ever fills a blank.** A number already on record is somebody's
+  considered entry and is never replaced from the receipt form. Correcting a
+  *wrong* number stays a deliberate edit in the sheet.
+- **It writes by Enrollment ID, not by name.** Two students genuinely share a
+  name on this roster, and the one being filled in is by definition the one
+  with no number to tell her apart by.
+
+Siblings are why the prompt can name more than one child. Two children under
+one guardian share a number, so one yes fills both blanks — and where one
+sibling already has the number and the other does not, **the prompt appears on
+its own**, without anything being typed. That is the case that quietly repairs
+the roster as receipts are issued.
+
+Nothing is offered when the selected students' recorded numbers disagree with
+what is in the box. That is a mismatch to resolve in the sheet, not a blank to
+fill.
+
+To see what a write would do before trusting it, open `previewPhoneFillHere`
+in the Apps Script editor, put a real Enrollment ID and number into the two
+lines at the top, and Run. It logs which cells it would fill and which it
+would leave alone, and writes nothing.
 
 ### ID formats
 - **Enrollment ID:** `SR-YYYY-MMDDHHmmssSSS` (timestamp-based, never duplicates, auto-updates year)
@@ -416,6 +450,8 @@ click Run, then read the **Execution log**.
 | `backfillJoiningMonth` | Fills those in. Blank cells only; never overwrites. |
 | `previewContactBackfill` | Shows which legacy rows would get a phone and a centre from the September 2026 phonebook import. Writes nothing. |
 | `applyContactBackfill` | Writes them. Blank cells only; skips students who have left; safe to re-run. |
+| `previewPhoneFillHere` | What the receipt form's "Save this number" would do for one student. Edit the ID and number at the top of the function, then Run. Writes nothing. |
+| `previewStudentPhoneFill` | The same, called with arguments from other code. Writes nothing. |
 
 > **The contact backfill is a one-off (September 2026).** Built from Anjali's
 > phonebook export matched against the roster, with every ambiguous case decided
@@ -470,6 +506,11 @@ an unclosed hold cannot excuse months that have not happened yet.
 Editing `Status` or `Left On` in `Enrollments` by hand appends a line here
 automatically — when, which row, who, from what to what. Nothing to remember
 and nothing to double-enter.
+
+A phone number saved from the receipt form lands here too, as a `Phone` row
+from blank to the number, recorded against `Receipt form` rather than a person.
+`Looks like` reads `Other` for those — the guesswork below is about status
+changes only.
 
 Two columns carry the judgement:
 
