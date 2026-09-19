@@ -2064,8 +2064,26 @@ async function loadRecordsTab() {
   c.innerHTML = '<div class="loading-state">🪷 Loading records…</div>';
   try {
     const [enrRes, recRes] = await Promise.all([api('getEnrollments'), api('getReceipts')]);
-    allEnrollments = enrRes.records || [];
-    allReceipts    = recRes.records || [];
+
+    // A server-side failure comes back as { error, stack } with HTTP 200, so
+    // it used to slip through here as "no records" — the Records tab went
+    // quietly empty and looked like an empty roster rather than a fault.
+    // Say what happened instead of showing an empty state that is a lie.
+    const failed = [];
+    if (!enrRes || !enrRes.records) failed.push('Enrollments' + (enrRes && enrRes.error ? ': ' + enrRes.error : ''));
+    if (!recRes || !recRes.records) failed.push('Receipts'    + (recRes && recRes.error ? ': ' + recRes.error : ''));
+    if (failed.length) {
+      const box = document.createElement('div');
+      box.className = 'loading-state';
+      box.textContent = 'Could not read ' + failed.join(' — and ') +
+        '. Nothing is lost; this is a read that failed. Tell Saurav what this says.';
+      c.innerHTML = '';
+      c.appendChild(box);
+      return;
+    }
+
+    allEnrollments = enrRes.records;
+    allReceipts    = recRes.records;
     renderRecords();
   } catch(e) {
     c.innerHTML = '<div class="loading-state">Could not load records. Check connection.</div>';
