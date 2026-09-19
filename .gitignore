@@ -15,3 +15,10 @@
 Anjali_Contacts.xlsx
 Sriram Studio Records - Enrollments.csv
 Phone Backfill Review.xlsx
+
+# The whole Archive folder, whatever ends up in it. The rules above cover
+# spreadsheets; a PDF, a JSON export or a screenshot of the roster would not
+# be caught by them, and an Archive folder is exactly where such a thing gets
+# dropped and forgotten.
+Archive/
+archive/

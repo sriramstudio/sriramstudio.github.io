@@ -273,6 +273,12 @@ function doGet(e) {
         result = deleteEnrollment(e.parameter.id);
         break;
 
+      // Fills a blank Phone cell from the receipt form, with Anjali's consent.
+      // Protected by default: it is not in PUBLIC_ACTIONS.
+      case 'setStudentPhone':
+        result = setStudentPhone(e.parameter.ids, e.parameter.phone);
+        break;
+
       case 'updateConfig': {
         const cfgKey = e.parameter.key;
         const cfgVal = e.parameter.value || '';
@@ -435,6 +441,8 @@ function listStudents() {
     if (seen[key]) continue;
     seen[key] = true;
     students.push({
+      // Carried so a number typed on the receipt form can reach the right row.
+      id:       col('ID')(row),
       studentName: name,
       phone:    phone,
       program:  col('Program')(row),
@@ -478,6 +486,10 @@ function searchStudents(q) {
     if (name.toLowerCase().includes(lower) && !seen.has(key)) {
       seen.add(key);
       results.push({
+        // The ID is what lets a correction reach the right row. Two students
+        // really can share a name, and the one whose number we are filling in
+        // is by definition the one with no number to tell her apart by.
+        id:       col('ID')(row),
         studentName: name,
         phone:    phone,
         program:  col('Program')(row),
@@ -488,6 +500,127 @@ function searchStudents(q) {
     }
   }
   return { results };
+}
+
+// ─── Phone numbers filled in from the receipt form ────────────
+// Anjali types a number on a receipt for a student who has none on record.
+// That number is worth keeping, but only where the cell is EMPTY: an existing
+// number is somebody's considered entry and is never overwritten from here.
+// Corrections to a wrong number stay a deliberate edit in the sheet.
+//
+// Siblings are the reason ids is a list. Two children with one guardian share
+// one number, so one consent can fill both blanks.
+
+// Digits only, for comparing two numbers that are written differently.
+function phoneDigits_(v) {
+  return (v === null || v === undefined) ? '' : v.toString().replace(/\D/g, '');
+}
+
+// Indian mobile numbers, however she writes them: 98xxxxxxxx, 098xxxxxxxx,
+// +91 98xxxxxxxx. Anything that cannot be one of those is refused rather
+// than written and puzzled over later.
+function normalisePhone_(v) {
+  const d = phoneDigits_(v);
+  if (d.length === 10) return d;
+  if (d.length === 11 && d.charAt(0) === '0') return d.slice(1);
+  if (d.length === 12 && d.slice(0, 2) === '91') return d.slice(2);
+  return '';
+}
+
+// Shared by the preview and the write, so what you are shown is worked out by
+// the same code that does it.
+function planPhoneFill_(ids, phone) {
+  const want = normalisePhone_(phone);
+  if (!want) return { error: 'That does not look like a phone number: ' + phone };
+
+  const list = (ids || '').toString().split(',')
+    .map(function (x) { return x.trim(); })
+    .filter(Boolean);
+  if (!list.length) return { error: 'No student was named.' };
+
+  const sheet = getSheet('Enrollments');
+  const data  = sheet.getDataRange().getValues();
+  if (data.length <= 1) return { error: 'No students on record.' };
+
+  const head  = data[0].map(function (v) { return (v === null ? '' : v.toString().trim()); });
+  const iId    = head.indexOf('ID');
+  const iName  = head.indexOf('Student Name');
+  const iPhone = head.indexOf('Phone');
+  if (iId < 0 || iPhone < 0) return { error: 'Enrollments is missing its ID or Phone column.' };
+
+  const fill = [], kept = [], missing = [];
+  list.forEach(function (id) {
+    let found = -1;
+    for (let r = 1; r < data.length; r++) {
+      if (data[r][iId] !== undefined && data[r][iId].toString() === id) { found = r; break; }
+    }
+    if (found < 0) { missing.push(id); return; }
+    const name = iName >= 0 ? (data[found][iName] || '').toString() : id;
+    const have = phoneDigits_(data[found][iPhone]);
+    if (have) kept.push({ row: found + 1, id: id, name: name, phone: have });
+    else      fill.push({ row: found + 1, id: id, name: name });
+  });
+
+  return { phone: want, fill: fill, kept: kept, missing: missing,
+           phoneCol: iPhone + 1 };
+}
+
+// Read-only. Run from the Apps Script editor before trusting the write.
+function previewStudentPhoneFill(ids, phone) {
+  const plan = planPhoneFill_(ids, phone);
+  if (plan.error) { Logger.log('Cannot: ' + plan.error); return plan; }
+
+  Logger.log('Number: ' + plan.phone);
+  Logger.log('Would fill ' + plan.fill.length + ' blank cell(s):');
+  plan.fill.forEach(function (f) {
+    Logger.log('  row ' + f.row + '  ' + f.name);
+  });
+  if (plan.kept.length) {
+    Logger.log('Would leave ' + plan.kept.length + ' existing number(s) alone:');
+    plan.kept.forEach(function (k) {
+      Logger.log('  row ' + k.row + '  ' + k.name + '  ' + k.phone);
+    });
+  }
+  if (plan.missing.length) Logger.log('No such student: ' + plan.missing.join(', '));
+  Logger.log('Nothing has been written.');
+  return plan;
+}
+
+// The Apps Script editor runs a function with no arguments, so the preview
+// needs a front door with the values written into it. Put the student's ID
+// and the number here, press Run, and read the log. Nothing is written.
+function previewPhoneFillHere() {
+  const ID    = 'SR-2026-0101120000000';   // ← the student's ID from Enrollments
+  const PHONE = '9800000000';              // ← the number being considered
+  return previewStudentPhoneFill(ID, PHONE);
+}
+
+function setStudentPhone(ids, phone) {
+  const plan = planPhoneFill_(ids, phone);
+  if (plan.error) return { success: false, error: plan.error };
+
+  const sheet = getSheet('Enrollments');
+  const filled = [];
+  plan.fill.forEach(function (f) {
+    sheet.getRange(f.row, plan.phoneCol).setValue(plan.phone);
+    filled.push(f.name);
+    try {
+      logStatusChange_({
+        row: f.row, id: f.id, name: f.name, field: 'Phone',
+        from: '', to: plan.phone, by: 'Receipt form'
+      });
+    } catch (err) {
+      // The number is saved. A missing diary line must not undo that.
+    }
+  });
+
+  return {
+    success: true,
+    phone:   plan.phone,
+    filled:  filled,
+    kept:    plan.kept.map(function (k) { return k.name; }),
+    missing: plan.missing
+  };
 }
 
 function deleteEnrollment(id) {

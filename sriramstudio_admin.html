@@ -682,7 +682,7 @@
           <div class="field">
             <label>Contact / WhatsApp <span style="font-weight:400;text-transform:none;letter-spacing:0;
                   font-size:10px;color:#B0A090">(who is paying)</span></label>
-            <input id="r-phone" class="inp" placeholder="Auto-filled from records" type="tel" oninput="phoneAutoFilled = false; updateOtherContacts()" />
+            <input id="r-phone" class="inp" placeholder="Auto-filled from records" type="tel" oninput="phoneTyped = true; flagContactMismatch()" />
             <div id="r-other-contacts" style="font-size:11px;color:var(--muted);margin-top:4px"></div>
           </div>
 
@@ -1340,7 +1340,7 @@ function renderSuggestions(results, q) {
     el.addEventListener('mousedown', function (e) {
       e.preventDefault();
       const s = list._results[parseInt(el.dataset.idx)];
-      if (s) selectStudent(s.studentName, s.phone, s.program, s.location);
+      if (s) selectStudent(s.studentName, s.phone, s.program, s.location, s.id);
     });
   });
   list.classList.add('show');
@@ -1371,34 +1371,80 @@ function searchStudents(q) {
 // Receipts can cover several students; each pick becomes a removable chip.
 let selectedStudents = [];
 
-// True while the Contact box holds a number that came from a student record
-// rather than from Anjali's own typing. Only an auto-filled number is allowed
-// to follow the chips back out again.
-let phoneAutoFilled = false;
+// True while the Contact box holds a number Anjali typed rather than one
+// taken from a student's record. It survives while the same students stay
+// selected, and dies with the last chip.
+let phoneTyped = false;
 
 function studentKey(name, phone) {
   return (name || '').toLowerCase() + '|' + (phone || '').replace(/\D/g, '');
 }
 
-// The Contact box is filled from the student who was picked, so it has to
-// follow that student back out. Removing the chip used to leave the number
-// sitting there, and the receipt went out under the previous family's contact
-// unless Anjali noticed and cleared it by hand. A number she typed herself is
-// never touched.
-function syncAutoPhone() {
+// ── The Contact box ──────────────────────────────────────────
+// One receipt carries one number. A receipt covering several students is a
+// family settling up together, so that number is the guardian's and the same
+// for all of them — which is why this is one box and not a list.
+//
+// Where its contents come from:
+//   no students selected                        → blank
+//   any selected student has a number on record → that number
+//   none of them has one                        → blank, for Anjali to type
+//
+// A number she types is kept while those students stay selected and cleared
+// the moment the last chip goes, so the next receipt never starts life under
+// the previous family's contact.
+
+// The distinct numbers among the selected students, compared on digits alone
+// so "98307 92201" and "9830792201" count as one number.
+function selectedPhoneList() {
+  const seen = [], out = [];
+  selectedStudents.forEach(function (s) {
+    const d = (s.phone || '').replace(/\D/g, '');
+    if (!d || seen.indexOf(d) >= 0) return;
+    seen.push(d);
+    out.push(s.phone);
+  });
+  return out;
+}
+
+function syncContact() {
   const el = document.getElementById('r-phone');
-  if (!el || !phoneAutoFilled) return;
-  let auto = '';
-  for (let i = 0; i < selectedStudents.length; i++) {
-    if (selectedStudents[i].phone) { auto = selectedStudents[i].phone; break; }
+  if (!el) return;
+  if (!selectedStudents.length) {
+    el.value = '';
+    phoneTyped = false;
+  } else {
+    const nums = selectedPhoneList();
+    // A number already on record wins: it is what the sheet believes, and the
+    // receipt form is not the place to argue with it.
+    if (nums.length) { el.value = nums[0]; phoneTyped = false; }
+    else if (!phoneTyped) { el.value = ''; }
   }
-  el.value = auto;
-  if (!auto) phoneAutoFilled = false;
-  updateOtherContacts();
+  flagContactMismatch();
+}
+
+// Two selected students with two different numbers on record are not siblings
+// under one guardian, whatever else they are. Anjali is told, not stopped:
+// two children of one family can be registered under different guardians and
+// a joint receipt for them is perfectly legitimate. The first number is the
+// one the receipt carries.
+function flagContactMismatch() {
+  const el = document.getElementById('r-other-contacts');
+  if (!el) return;
+  const nums = selectedPhoneList();
+  if (selectedStudents.length < 2 || nums.length < 2) {
+    el.textContent = '';
+    el.style.color = 'var(--muted)';
+    return;
+  }
+  el.style.color = '#B45309';
+  el.textContent = 'These students have different numbers on record (' +
+    nums.join('  |  ') + '). If they are siblings under one guardian, correct ' +
+    'the odd one in the sheet. This receipt will carry ' + nums[0] + '.';
 }
 
 function renderStudentChips() {
-  syncAutoPhone();
+  syncContact();
   const box = document.getElementById('r-students');
   if (!selectedStudents.length) { box.innerHTML = ''; box.style.display = 'none'; return; }
   box.style.display = 'flex';
@@ -1422,24 +1468,23 @@ function clearSelectedStudents() {
   renderFeeEditor();
 }
 
-function addStudentChip(name, phone, program, location) {
+function addStudentChip(name, phone, program, location, id) {
   const key = studentKey(name, phone);
   const dup = selectedStudents.some(function (s) { return studentKey(s.name, s.phone) === key; });
   // Every chip gets an id of its own. Two different children really can share
   // a name — there are two Krisha Agarwals on this roster — so the fee lines
   // must hang off something unique, never off the name.
   if (!dup) selectedStudents.push({ uid: 'c' + (++chipSeq), name: name, phone: phone || '',
+                                    id: id || '',
                                     program: program || '', location: location || '' });
   renderStudentChips();
   renderFeeEditor();
 }
 
-function selectStudent(name, phone, program, location) {
-  addStudentChip(name, phone, program, location);
+function selectStudent(name, phone, program, location, id) {
+  addStudentChip(name, phone, program, location, id);
   document.getElementById('r-name').value  = '';
-  // The contact belongs to the first student picked; don't clobber an edit.
-  const phoneEl = document.getElementById('r-phone');
-  if (!phoneEl.value && phone) { phoneEl.value = phone; phoneAutoFilled = true; }
+  // The Contact box is worked out from the chips; syncContact() owns it.
   closeSuggestions();
 }
 function closeSuggestions() {
@@ -1591,7 +1636,7 @@ function renderFeeEditor() {
   });
 
   updateFeeTotal();
-  updateOtherContacts();
+  flagContactMismatch();
 }
 
 // What somebody else on this receipt is paying for the same fee type. Used
@@ -1632,25 +1677,6 @@ function feeGrandTotal() {
     (feeLines[p.uid] || []).forEach(function (f) { t += Number(f.amount) || 0; });
   });
   return t;
-}
-
-// The Contact box holds one number — whoever is paying — because that is what
-// the Contact column stores, and what tells two same-named children apart. So
-// when the other students on the receipt have numbers of their own, say so
-// here rather than leaving it looking as though only the first one exists.
-// Every distinct number is printed on the receipt itself.
-function updateOtherContacts() {
-  const el = document.getElementById('r-other-contacts');
-  if (!el) return;
-  const payer = (document.getElementById('r-phone').value || '').replace(/\D/g, '');
-  const others = selectedStudents
-    .filter(function (s) {
-      return s.phone && s.phone.replace(/\D/g, '') !== payer;
-    })
-    .map(function (s) { return s.name + ' · ' + s.phone; });
-  el.textContent = others.length
-    ? 'Also on this receipt — ' + others.join('  |  ') + '  (all of these are printed)'
-    : '';
 }
 
 function updateFeeTotal() {
@@ -1694,6 +1720,95 @@ function feeTypeSummary(split) {
   return seen.join(' + ');
 }
 
+// ── Keeping a number Anjali has just typed ───────────────────
+// A number on a receipt for a student who has none on record is worth having
+// in the roster. It is offered, never taken: she says yes, and it is written
+// ONLY into cells that are empty. A number already on record is somebody's
+// considered entry and is never overwritten from this form.
+//
+// Siblings are why this returns a list. Two children under one guardian share
+// one number, so one yes can fill both blanks — and where one sibling already
+// has the number and the other does not, the offer appears without her having
+// typed anything at all, which is exactly the case worth catching.
+function phoneFillCandidates() {
+  const typed  = (document.getElementById('r-phone').value || '').trim();
+  const digits = typed.replace(/\D/g, '');
+  if (digits.length < 10) return null;                  // nothing usable yet
+
+  const blanks = selectedStudents.filter(function (s) {
+    return s.id && !(s.phone || '').replace(/\D/g, '');
+  });
+  if (!blanks.length) return null;                      // nobody needs it
+
+  // Never offer to save against a family whose recorded number disagrees with
+  // what is in the box — that is a mismatch to resolve, not a blank to fill.
+  const onRecord = selectedStudents.filter(function (s) {
+    return (s.phone || '').replace(/\D/g, '');
+  });
+  const clashes = onRecord.some(function (s) {
+    return s.phone.replace(/\D/g, '') !== digits;
+  });
+  if (clashes) return null;
+
+  return { phone: typed, students: blanks, fromSibling: onRecord.length > 0 };
+}
+
+async function savePhoneToRecords(plan) {
+  try {
+    const r = await api('setStudentPhone', {
+      ids:   plan.students.map(function (s) { return s.id; }).join(','),
+      phone: plan.phone
+    });
+    if (r && r.success && (r.filled || []).length) {
+      // Keep the chips honest, so the offer does not reappear on the next
+      // receipt in the same sitting.
+      plan.students.forEach(function (s) { s.phone = r.phone; });
+      invalidateStudentCache();
+      toast('Number saved for ' + r.filled.join(' and '), 'success');
+    } else if (r && r.error) {
+      toast(r.error, 'error');
+    }
+  } catch (err) {
+    // The receipt is issued and that is what matters. Say so plainly rather
+    // than letting her think the roster was updated when it was not.
+    toast('Receipt issued — but the number could not be saved to the record', 'error');
+  }
+}
+
+function confirmPhoneSave(plan) {
+  return new Promise(function (resolve) {
+    const names = plan.students.map(function (s) { return s.name; });
+    const many  = names.length > 1;
+
+    document.getElementById('ph-title').textContent =
+      many ? 'Save this number for them?' : 'Save this number to the record?';
+    document.getElementById('ph-intro').textContent = plan.fromSibling
+      ? (many ? names.join(' and ') + ' have no phone number on record, while the ' +
+                'sibling on this receipt does.'
+              : names[0] + ' has no phone number on record, while the sibling on ' +
+                'this receipt does.')
+      : (many ? names.join(' and ') + ' have no phone number on record.'
+              : names[0] + ' has no phone number on record.');
+
+    document.getElementById('ph-number').textContent = plan.phone;
+    document.getElementById('ph-who').textContent    = names.join(', ');
+
+    const overlay = document.getElementById('ph-overlay');
+    const finish = function (answer) {
+      overlay.classList.remove('show');
+      document.getElementById('ph-skip').onclick = null;
+      document.getElementById('ph-save').onclick = null;
+      document.onkeydown = null;
+      resolve(answer);
+    };
+    document.getElementById('ph-skip').onclick = function () { finish(false); };
+    document.getElementById('ph-save').onclick = function () { finish(true);  };
+    document.onkeydown = function (ev) { if (ev.key === 'Escape') finish(false); };
+    overlay.classList.add('show');
+    document.getElementById('ph-skip').focus();
+  });
+}
+
 async function generateReceipt() {
   // Chips if any were picked; otherwise fall back to whatever was typed, so a
   // student who is not in the database can still be given a receipt.
@@ -1720,6 +1835,11 @@ async function generateReceipt() {
     toast('Check the fee period — the second month must not be before the first', 'error');
     return;
   }
+
+  // Asked before anything is saved, so a no leaves the roster exactly as it
+  // was and the receipt still goes out.
+  const fillPlan  = phoneFillCandidates();
+  const savePhone = fillPlan ? await confirmPhoneSave(fillPlan) : false;
 
   const btn = document.getElementById('btn-gen-receipt');
   btn.textContent = 'Generating…'; btn.disabled = true;
@@ -1774,6 +1894,8 @@ async function generateReceipt() {
     // mirror to print target
     document.getElementById('print-target').innerHTML = document.getElementById('receipt-output').innerHTML;
     if (!r.duplicate) toast('Receipt saved ✓', 'success');
+    // Only now — a receipt that failed must not leave the roster changed.
+    if (savePhone) await savePhoneToRecords(fillPlan);
   } catch(e) {
     toast('Failed to save receipt. Check connection.', 'error');
   }
@@ -1870,7 +1992,7 @@ function showReceiptForm() {
   document.getElementById('receipt-form-view').style.display    = 'block';
   document.getElementById('r-name').value   = '';
   clearSelectedStudents();
-  phoneAutoFilled = false;
+  phoneTyped = false;
   document.getElementById('r-phone').value  = '';
 
   document.getElementById('r-upiref').value = '';
@@ -2278,6 +2400,25 @@ function confirmDuplicateReceipt(matches) {
   });
 }
 </script>
+
+<div id="ph-overlay" class="dup-overlay">
+  <div class="dup-card" role="alertdialog" aria-labelledby="ph-title">
+    <h2 id="ph-title">Save this number to the record?</h2>
+    <p id="ph-intro"></p>
+    <div class="dup-list">
+      <div class="dup-item">
+        <span class="dup-amt" id="ph-number"></span>
+        <dl><dt>For</dt> <dd id="ph-who"></dd></dl>
+      </div>
+    </div>
+    <div class="dup-actions">
+      <button id="ph-skip" class="dup-cancel" type="button">Not now</button>
+      <button id="ph-save" class="dup-go" type="button">Save to record</button>
+    </div>
+    <p class="dup-note">The receipt is issued either way. Saving only fills a
+      blank — a number already on record is never replaced from here.</p>
+  </div>
+</div>
 
 <div id="dup-overlay" class="dup-overlay">
   <div class="dup-card" role="alertdialog" aria-labelledby="dup-title">

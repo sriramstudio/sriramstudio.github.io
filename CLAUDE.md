@@ -21,6 +21,7 @@ home addresses. The Apps Script web app is reachable by anyone who reads
 ```
 node tests/auth.test.js Code.gs                    # after any Code.gs change
 node tests/check-refs.js sriramstudio_admin.html   # after any HTML change
+node tests/contact.test.js sriramstudio_admin.html # after touching the Contact box
 ```
 
 `node --check` only catches syntax. `check-refs.js` exists because deleting a
