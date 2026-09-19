@@ -682,7 +682,7 @@
           <div class="field">
             <label>Contact / WhatsApp <span style="font-weight:400;text-transform:none;letter-spacing:0;
                   font-size:10px;color:#B0A090">(who is paying)</span></label>
-            <input id="r-phone" class="inp" placeholder="Auto-filled from records" type="tel" oninput="updateOtherContacts()" />
+            <input id="r-phone" class="inp" placeholder="Auto-filled from records" type="tel" oninput="phoneAutoFilled = false; updateOtherContacts()" />
             <div id="r-other-contacts" style="font-size:11px;color:var(--muted);margin-top:4px"></div>
           </div>
 
@@ -1371,11 +1371,34 @@ function searchStudents(q) {
 // Receipts can cover several students; each pick becomes a removable chip.
 let selectedStudents = [];
 
+// True while the Contact box holds a number that came from a student record
+// rather than from Anjali's own typing. Only an auto-filled number is allowed
+// to follow the chips back out again.
+let phoneAutoFilled = false;
+
 function studentKey(name, phone) {
   return (name || '').toLowerCase() + '|' + (phone || '').replace(/\D/g, '');
 }
 
+// The Contact box is filled from the student who was picked, so it has to
+// follow that student back out. Removing the chip used to leave the number
+// sitting there, and the receipt went out under the previous family's contact
+// unless Anjali noticed and cleared it by hand. A number she typed herself is
+// never touched.
+function syncAutoPhone() {
+  const el = document.getElementById('r-phone');
+  if (!el || !phoneAutoFilled) return;
+  let auto = '';
+  for (let i = 0; i < selectedStudents.length; i++) {
+    if (selectedStudents[i].phone) { auto = selectedStudents[i].phone; break; }
+  }
+  el.value = auto;
+  if (!auto) phoneAutoFilled = false;
+  updateOtherContacts();
+}
+
 function renderStudentChips() {
+  syncAutoPhone();
   const box = document.getElementById('r-students');
   if (!selectedStudents.length) { box.innerHTML = ''; box.style.display = 'none'; return; }
   box.style.display = 'flex';
@@ -1416,7 +1439,7 @@ function selectStudent(name, phone, program, location) {
   document.getElementById('r-name').value  = '';
   // The contact belongs to the first student picked; don't clobber an edit.
   const phoneEl = document.getElementById('r-phone');
-  if (!phoneEl.value && phone) phoneEl.value = phone;
+  if (!phoneEl.value && phone) { phoneEl.value = phone; phoneAutoFilled = true; }
   closeSuggestions();
 }
 function closeSuggestions() {
@@ -1847,6 +1870,7 @@ function showReceiptForm() {
   document.getElementById('receipt-form-view').style.display    = 'block';
   document.getElementById('r-name').value   = '';
   clearSelectedStudents();
+  phoneAutoFilled = false;
   document.getElementById('r-phone').value  = '';
 
   document.getElementById('r-upiref').value = '';
