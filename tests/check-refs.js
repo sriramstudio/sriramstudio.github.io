@@ -42,8 +42,24 @@ const GLOBALS = new Set(['console','document','window','alert','confirm','setTim
   'location','URL','URLSearchParams','Intl','Symbol','BigInt','requestAnimationFrame','structuredClone',
   'queueMicrotask','btoa','atob','print','open','close','blur','focus','scroll','scrollTo','matchMedia']);
 
+// Template literals were blanked wholesale above, which is a hole big enough
+// to lose a bug in: the Records tab called hasLeft() from inside a `${ }`,
+// nothing defined it, this test passed, and the tab rendered empty in front
+// of Anjali. Anything interpolated into HTML is live code, so pull those
+// expressions back out of the ORIGINAL source and check them too. Definitions
+// still come only from the stripped copy, so a name that merely appears
+// inside a literal can never count as defined.
+const raw = blocks.join('\n;\n');
+const interpolations = [...raw.matchAll(/\$\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}/g)]
+  .map(m => m[1])
+  .join('\n;\n')
+  .replace(/'(?:\\[\s\S]|[^'\\\n])*'/g, "''")
+  .replace(/"(?:\\[\s\S]|[^"\\\n])*"/g, '""');
+
+const callSites = src + '\n;\n' + interpolations;
+
 const missing = new Map();
-for (const m of src.matchAll(/(^|[^.\w$])([A-Za-z_$][\w$]*)\s*\(/gm)) {
+for (const m of callSites.matchAll(/(^|[^.\w$])([A-Za-z_$][\w$]*)\s*\(/gm)) {
   const name = m[2];
   if (KEYWORDS.has(name) || GLOBALS.has(name) || defined.has(name)) continue;
   missing.set(name, (missing.get(name) || 0) + 1);

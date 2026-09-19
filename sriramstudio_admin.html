@@ -2133,6 +2133,22 @@ function renderRecords(searchQ) {
   c.innerHTML = filtered.map(r => enrollmentRecordHTML(r)).join('');
 }
 
+// Does this Status mean the student has left? The backend decides the same
+// question with isLeftWord_ and the same list of words; the roster is typed
+// by hand, so "Discontinued", "left", "not continuing" and the rest all have
+// to read as one thing.
+//
+// This was missing entirely. The Records tab called it, threw, and rendered
+// an empty list — every filter blank except Receipts, which does not use it.
+const LEFT_WORDS = ['discontinue', 'discontinued', 'left', 'inactive',
+                    'stopped', 'quit', 'dropped', 'not continuing'];
+
+function hasLeft(status) {
+  const t = (status === null || status === undefined) ? '' : status.toString().trim().toLowerCase();
+  if (!t) return false;
+  return LEFT_WORDS.some(function (w) { return t.indexOf(w) >= 0; });
+}
+
 function enrollmentRecordHTML(r) {
   const typeClass = r['Type'] === 'New Admission' ? 'admission' : r['Type'] === 'Workshop' ? 'workshop' : r['Type'].startsWith('Application') ? 'application' : 'legacy';
   const prog = r['Program'] || r['Workshop Name'] || '—';
