@@ -1443,7 +1443,41 @@ function flagContactMismatch() {
     'the odd one in the sheet. This receipt will carry ' + nums[0] + '.';
 }
 
+// Everything on this form describes one payment by one family. Clearing the
+// last student is Anjali starting again, so the rest of the form has to go
+// with them — a note reading "late fee for May" left over from an abandoned
+// receipt would otherwise ride onto the next family's.
+//
+// Only on the way from some students to none. Removing one sibling of three,
+// or clearing a form that was already empty, leaves her typing alone.
+let hadStudents = false;
+
+function resetReceiptInputs() {
+  const note = document.getElementById('r-note');
+  if (note) note.value = '';
+  const upi = document.getElementById('r-upiref');
+  if (upi) upi.value = '';
+
+  // Back to this month and today, which is what a fresh form opens with.
+  const d = new Date();
+  const month = document.getElementById('r-month');
+  const year  = document.getElementById('r-year');
+  if (month) month.value = d.toLocaleString('en-US', { month: 'long' });
+  if (year)  year.value  = d.getFullYear();
+  const recv = document.getElementById('r-daterecv');
+  if (recv) recv.value = d.getFullYear() + '-' +
+    String(d.getMonth() + 1).padStart(2, '0') + '-' +
+    String(d.getDate()).padStart(2, '0');
+  resetPeriodRange();
+
+  const words = document.getElementById('amount-words');
+  if (words) words.textContent = '';
+}
+
 function renderStudentChips() {
+  if (hadStudents && !selectedStudents.length) resetReceiptInputs();
+  hadStudents = selectedStudents.length > 0;
+
   syncContact();
   const box = document.getElementById('r-students');
   if (!selectedStudents.length) { box.innerHTML = ''; box.style.display = 'none'; return; }

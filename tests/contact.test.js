@@ -98,5 +98,56 @@ is('a student who is not on the roster is never written to', api.offer(), null);
 api.set([S('Ira', '')]); api.typed('98765');
 is('a half-typed number is not offered', api.offer(), null);
 
+
+// ── Clearing the last student clears the rest of the form ──────
+// A note or a fee period left over from an abandoned receipt must not ride
+// onto the next family's. Removing one sibling of several must not disturb
+// anything Anjali has typed.
+(function () {
+  const fEls = {
+    'r-note':   { value: 'late fee for May' },
+    'r-upiref': { value: 'REF123' },
+    'r-month':  { value: 'March' },
+    'r-year':   { value: '2020' },
+    'r-daterecv': { value: '2020-01-01' },
+    'amount-words': { textContent: 'x' },
+    'r-phone':  { value: '' },
+    'r-other-contacts': { textContent: '', style: {} },
+    'r-students': { style: {}, innerHTML: '', querySelectorAll: function () { return []; } }
+  };
+  const want = ['resetReceiptInputs', 'renderStudentChips'].map(function (fn) {
+    const m = src.match(new RegExp('\\nfunction ' + fn + '\\(.*?\\n\\}\\n', 's'));
+    if (!m) { console.log('FAIL  ' + fn + ' is not in ' + file); process.exit(1); }
+    return m[0];
+  });
+  const form = new Function('els', `
+    let selectedStudents = [], phoneTyped = false, hadStudents = false;
+    const document = { getElementById: function (id) { return els[id] || null; } };
+    function resetPeriodRange() { els.periodReset = true; }
+    function syncContact() { if (!selectedStudents.length) els['r-phone'].value = ''; }
+    function renderFeeEditor() {}
+    ${want.join('\n')}
+    return { set: function (l) { selectedStudents = l; }, render: renderStudentChips };
+  `)(fEls);
+
+  const thisMonth = new Date().toLocaleString('en-US', { month: 'long' });
+
+  form.set([S('A', ''), S('B', '')]); form.render();
+  is('a note survives while students are selected', fEls['r-note'].value, 'late fee for May');
+
+  form.set([S('A', '')]); form.render();
+  is('  ...and survives removing one of two', fEls['r-note'].value, 'late fee for May');
+
+  form.set([]); form.render();
+  is('removing the last student clears the note', fEls['r-note'].value, '');
+  is('  ...and the UPI reference', fEls['r-upiref'].value, '');
+  is('  ...and puts the fee month back to this month', fEls['r-month'].value, thisMonth);
+  is('  ...and the year', String(fEls['r-year'].value), String(new Date().getFullYear()));
+  is('  ...and closes the multi-month range', fEls.periodReset, true);
+
+  fEls['r-note'].value = 'new note'; form.render();
+  is('a note typed on an already-empty form is left alone', fEls['r-note'].value, 'new note');
+})();
+
 console.log(fails ? '\n' + fails + ' CHECK(S) FAILED' : '\nALL CONTACT CHECKS PASSED');
 process.exit(fails ? 1 : 0);
