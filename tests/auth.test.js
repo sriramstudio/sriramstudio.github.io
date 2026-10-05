@@ -1935,5 +1935,231 @@ var shortMon = call(w, { action: 'addReceipt', pin: '1234',
                          data: enc(dupReceipt({ month: 'Aug' })) });
 check('an abbreviated month does not slip past it', shortMon.needsConfirm === true, shortMon);
 
+// ─── A one-off fee: who has not paid it ───────────────────────
+// Monthly tuition is inferable from the calendar. A once-a-year charge is not,
+// so the expectation is "every active student" and the exclusions are stated.
+console.log('');
+console.log('--- who is pending a one-off fee ---');
+
+var ofHd = ['Student ID', 'Student Name', 'Type', 'From Month', 'To Month',
+            'Expected Return', 'Reason', 'Approved By', 'Approved On', 'Note',
+            'Recorded At', 'Fee Type'];
+var ofEx = function (id, name, type, from, to, fee, why) {
+  return [id, name, type, from || '', to || '', '', why || '', '', '', '', '', fee || ''];
+};
+
+var showWorld = function (receipts, exempt) {
+  var wv = freshWorld('1234');
+  var mk = function (id, name) { var d = dRow(id, name, '9' + id.slice(-6)); d[15] = 'January 2026'; return d; };
+  wv.sheets.Enrollments = makeSheet([dh, mk('SR-F1', 'Alpha Kid'), mk('SR-F2', 'Beta Kid'),
+                                         mk('SR-F3', 'Gamma Kid')]);
+  wv.sheets.Receipts = makeSheet([rhd].concat(receipts || []));
+  if (exempt) wv.sheets['Fee Exemptions'] = makeSheet([ofHd].concat(exempt));
+  return wv;
+};
+// [no, issued, name, contact, amt, month, year, mode, upi, type, recd, note, students]
+var ofR = function (no, name, amt, year, type) {
+  return [no, '01 Sep ' + year, name, '9', amt, 'September', String(year), 'Cash', '',
+          type, '', '', name];
+};
+
+var SHOW = 'Annual Show Fee';
+
+// Nobody has paid.
+w = showWorld([]);
+var r0 = w.sandbox.oneOffFeeStatus_(SHOW, 2026);
+check('with no receipts every active student is pending',
+      r0.pending.length === 3 && r0.paid.length === 0, [r0.pending.length, r0.paid.length]);
+
+// One pays.
+w = showWorld([ofR('SS-F1', 'Alpha Kid', '1500', 2026, SHOW)]);
+var r1 = w.sandbox.oneOffFeeStatus_(SHOW, 2026);
+check('a payer moves out of pending',
+      r1.paid.length === 1 && r1.pending.length === 2, [r1.paid.length, r1.pending.length]);
+check('  ...and is the one who actually paid',
+      r1.paid[0].s.name === 'Alpha Kid', r1.paid[0].s.name);
+
+// A monthly fee is not a show fee.
+w = showWorld([ofR('SS-F2', 'Alpha Kid', '1500', 2026, 'Monthly Fee')]);
+check('a monthly fee does not settle a one-off fee',
+      w.sandbox.oneOffFeeStatus_(SHOW, 2026).pending.length === 3,
+      w.sandbox.oneOffFeeStatus_(SHOW, 2026).pending.length);
+
+// Last year's show fee does not settle this year's.
+w = showWorld([ofR('SS-F3', 'Alpha Kid', '1500', 2025, SHOW)]);
+var ry = w.sandbox.oneOffFeeStatus_(SHOW, 2026);
+check('last year\'s payment does not settle this year',
+      ry.pending.length === 3 && ry.wrongYear.length === 1, [ry.pending.length, ry.wrongYear.length]);
+
+// Amounts. Three payers is too few for any figure to BE a rate, so nothing is
+// called short — the conservative answer, and the escape hatch is Config.
+w = showWorld([ofR('SS-F4', 'Alpha Kid', '1500', 2026, SHOW),
+               ofR('SS-F5', 'Beta Kid', '1500', 2026, SHOW),
+               ofR('SS-F6', 'Gamma Kid', '500', 2026, SHOW)]);
+var rp = w.sandbox.oneOffFeeStatus_(SHOW, 2026);
+check('on a handful of payers no amount is treated as the rate',
+      rp.rates.length === 0 && rp.part.length === 0, [rp.rates, rp.part.length]);
+check('  ...so nobody is accused of underpaying on thin evidence',
+      rp.paid.length === 3 && rp.pending.length === 0, [rp.paid.length, rp.pending.length]);
+
+// A stated expected amount overrides the data and judges even a small sample.
+w = showWorld([ofR('SS-F4', 'Alpha Kid', '1500', 2026, SHOW),
+               ofR('SS-F6', 'Gamma Kid', '500', 2026, SHOW)]);
+w.sheets.Config._data.push(['oneoff_expected', '1500']);
+var rc = w.sandbox.oneOffFeeStatus_(SHOW, 2026);
+check('a stated expected amount in Config is obeyed',
+      rc.stated === 1500 && rc.part.length === 1 && rc.part[0].s.name === 'Gamma Kid',
+      [rc.stated, rc.part.map(function (x) { return x.s.name; })]);
+
+// THE case from the real data: two legitimate rates. Twenty students paying
+// 1,800 where most pay 2,400 are on a second rate, not twenty defaulters.
+var manyWorld = function () {
+  var wv = freshWorld('1234');
+  var roster = [dh], recs = [rhd];
+  for (var i = 1; i <= 60; i++) {
+    var id = 'SR-M' + (1000 + i), nm = 'Kid ' + i;
+    var d = dRow(id, nm, '98300' + (10000 + i)); d[15] = 'January 2026';
+    roster.push(d);
+    // 45 on the top rate, 12 on a second rate, 3 genuine part payments —
+    // which scatter, as real part payments do. That scatter is the whole
+    // signal: an amount twelve students share is a price, three different
+    // small amounts are three people who owe the balance.
+    var amt = i <= 45 ? '2400' : (i <= 57 ? '1800' : (i === 58 ? '300' : (i === 59 ? '500' : '900')));
+    recs.push(ofR('SS-M' + i, nm, amt, 2026, SHOW));
+  }
+  wv.sheets.Enrollments = makeSheet(roster);
+  wv.sheets.Receipts = makeSheet(recs);
+  return wv;
+};
+w = manyWorld();
+var rm = w.sandbox.oneOffFeeStatus_(SHOW, 2026);
+check('both legitimate rates are recognised',
+      rm.rates.length === 2 && rm.rates[0] === 1800 && rm.rates[1] === 2400, rm.rates);
+check('  ...so the lower-rate students count as PAID, not short',
+      rm.paid.length === 57, rm.paid.length);
+check('  ...and only the genuine outliers are short',
+      rm.part.length === 3 &&
+      rm.part.map(function (x) { return x.amount; }).sort(function (a, b) { return a - b; })
+        .join(',') === '300,500,900',
+      rm.part.map(function (x) { return x.amount; }));
+check('  ...the lowest rate is the bar, not the commonest amount',
+      rm.lowestRate === 1800 && rm.standard === 2400, [rm.lowestRate, rm.standard]);
+
+// A receipt covering two siblings with one name on it: the money is in, the
+// sister is still pending, and nothing about the figure is wrong enough to be
+// called short. The arithmetic is the only tell.
+w = manyWorld();
+// Two students who have paid nothing else, so the figure on the receipt is the
+// whole of what they have paid. (Totals accumulate per student, as two genuine
+// part payments should.)
+var sibA = dRow('SR-SIBA', 'Sibling One', '9830099001'); sibA[15] = 'January 2026';
+var sibB = dRow('SR-SIBB', 'Sibling Two', '9830099002'); sibB[15] = 'January 2026';
+w.sheets.Enrollments._data.push(sibA);
+w.sheets.Enrollments._data.push(sibB);
+w.sheets.Receipts._data.push(ofR('SS-SIB1', 'Sibling One', '4800', 2026, SHOW));  // 2 x 2400
+w.sheets.Receipts._data.push(ofR('SS-SIB2', 'Sibling Two', '4200', 2026, SHOW));  // 2400 + 1800
+var rs = w.sandbox.oneOffFeeStatus_(SHOW, 2026);
+var sib = (rs.maybeSibling || []).map(function (x) { return x.s.name + '=' + x.amount; }).sort();
+check('a payment of about two rates is flagged as possibly covering a sibling',
+      sib.length === 2, sib);
+check('  ...and the sum of two different rates is called out exactly',
+      (rs.maybeSibling || []).filter(function (x) { return x.looksLikeTwo; }).length === 2,
+      (rs.maybeSibling || []).map(function (x) { return [x.amount, x.looksLikeTwo]; }));
+check('  ...while still counting as paid, not short',
+      rs.part.length === 3, rs.part.length);
+check('  ...and a single-rate payment is NOT flagged',
+      !(rs.maybeSibling || []).some(function (x) { return x.amount === 2400 || x.amount === 1800; }),
+      'a normal payment was flagged as a sibling receipt');
+
+// A waiver scoped to this fee takes them out of pending.
+w = showWorld([], [ofEx('SR-F2', 'Beta Kid', 'Waiver', 'January 2026', 'December 2026',
+                        SHOW, 'not performing')]);
+var rw = w.sandbox.oneOffFeeStatus_(SHOW, 2026);
+check('a fee-scoped waiver removes them from pending',
+      rw.waived.length === 1 && rw.pending.length === 2, [rw.waived.length, rw.pending.length]);
+
+// THE important one: that waiver must not excuse a month's tuition.
+var bk = w.sandbox.buildFeeCoverage_().students.filter(function (s) { return s.name === 'Beta Kid'; })[0];
+check('  ...and does NOT excuse monthly tuition',
+      w.sandbox.isDue_(bk, w.sandbox.parsePeriod_('March 2026')) === true,
+      'a show-fee waiver silently waived a month of fees');
+check('  ...nor does it mark them on hold', bk.onHold === false, bk.onHold);
+
+// A plain hold (no fee type) still works exactly as before.
+w = showWorld([], [ofEx('SR-F2', 'Beta Kid', 'Hold', 'March 2026', 'April 2026', '', 'exams')]);
+var bk2 = w.sandbox.buildFeeCoverage_().students.filter(function (s) { return s.name === 'Beta Kid'; })[0];
+check('a hold with no fee type still excuses the month',
+      w.sandbox.isDue_(bk2, w.sandbox.parsePeriod_('March 2026')) === false,
+      'the fee-type scoping broke ordinary holds');
+check('  ...and such a hold does NOT settle the one-off fee',
+      w.sandbox.oneOffFeeStatus_(SHOW, 2026).pending.length === 3,
+      'a tuition hold wrongly waived the show fee');
+
+// Two children, one name — settled by the contact number on the receipt
+// itself. This is the Krisha Agarwal case: the evidence was in the same row.
+w = freshWorld('1234');
+var kA = dRow('SR-K1', 'Krisha Agarwal', '9830014153'); kA[15] = 'January 2026';
+var kB = dRow('SR-K2', 'Krisha Agarwal', '9831439849'); kB[15] = 'January 2026';
+w.sheets.Enrollments = makeSheet([dh, kA, kB]);
+w.sheets.Receipts = makeSheet([rhd,
+  ['SS-K1', '01 Sep 2026', 'Krisha Agarwal', '9830014153', '2400', 'September', '2026',
+   'Cash', '', SHOW, '', '', 'Krisha Agarwal']]);
+var rk = w.sandbox.oneOffFeeStatus_(SHOW, 2026);
+check('a shared name is settled by the receipt contact',
+      rk.resolvedByPhone.length === 1 && rk.ambiguousName.length === 0,
+      [rk.resolvedByPhone, rk.ambiguousName]);
+check('  ...and credited to the RIGHT child of the two',
+      rk.paid.length === 1 && rk.paid[0].s.id === 'SR-K1', 
+      rk.paid.map(function (x) { return x.s.id; }));
+check('  ...leaving only her namesake pending',
+      rk.pending.length === 1 && rk.pending[0].s.id === 'SR-K2',
+      rk.pending.map(function (x) { return x.s.id; }));
+
+// No contact on the receipt: still refuses to guess, and shows the candidates.
+w.sheets.Receipts._data[1][3] = '';
+var rk2 = w.sandbox.oneOffFeeStatus_(SHOW, 2026);
+check('with no contact it still refuses to pick one',
+      rk2.ambiguousName.length === 1 && rk2.paid.length === 0, 
+      [rk2.ambiguousName.length, rk2.paid.length]);
+check('  ...and names both candidates with their numbers',
+      (rk2.ambiguousName[0].candidates || []).length === 2,
+      rk2.ambiguousName[0].candidates);
+
+// A contact matching NEITHER child must not be forced onto one of them.
+w.sheets.Receipts._data[1][3] = '9000000000';
+check('a contact matching neither child is not forced onto one',
+      w.sandbox.oneOffFeeStatus_(SHOW, 2026).ambiguousName.length === 1,
+      'it guessed');
+
+// Topsia is the fifth centre.
+check('Topsia is recognised as a centre',
+      w.sandbox.matchCentre_('Topsia - Zen') === 'Topsia',
+      w.sandbox.matchCentre_('Topsia - Zen'));
+check('  ...and the four older centres still match',
+      ['Bhawanipur', 'Wood Street', 'Kankurgachi', 'Salt Lake'].every(function (c) {
+        return w.sandbox.matchCentre_(c) === c;
+      }), 'a previously known centre stopped matching');
+
+// A name on a receipt that is not on the roster must be reported, not lost.
+w = showWorld([ofR('SS-F7', 'Nobody Here', '1500', 2026, SHOW)]);
+var ru = w.sandbox.oneOffFeeStatus_(SHOW, 2026);
+check('an unmatched receipt name is surfaced',
+      ru.unmatched.length === 1 && ru.pending.length === 3,
+      [ru.unmatched.length, ru.pending.length]);
+
+// The report refuses to pretend it can do monthly tuition.
+check('it declines monthly tuition and points at the right report',
+      w.sandbox.oneOffFeeReport_('Monthly Fee', 2026).indexOf('Fee gaps report') >= 0,
+      'did not redirect');
+
+// Code.gs must still name no fee type: the default comes from Config.
+w = showWorld([ofR('SS-F8', 'Alpha Kid', '1500', 2026, SHOW)]);
+w.sheets.Config._data.push(['oneoff_fee', SHOW]);
+check('the default fee type is read from Config',
+      w.sandbox.readConfig('oneoff_fee') === SHOW, w.sandbox.readConfig('oneoff_fee'));
+check('  ...and the types present in the receipts are discoverable',
+      w.sandbox.oneOffFeeTypesSeen_().indexOf(SHOW) >= 0,
+      w.sandbox.oneOffFeeTypesSeen_());
+
 console.log('\n' + (fail === 0 ? 'ALL ' + pass + ' CHECKS PASSED' : pass + ' passed, ' + fail + ' FAILED'));
 process.exit(fail === 0 ? 0 : 1);

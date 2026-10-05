@@ -48,11 +48,20 @@ sriramstudio_admin.html ─┘                          │
 
 Keep this section updated. When any of these change, follow the matching checklist in Section 5.
 
-**Centres (4):**
+**Centres (5):**
 - Bhawanipur – 53A Girish Mukherjee Road, Kolkata – 700025
 - Wood Street – 6/4 Govind Mahal, 3 Wood Street, Kolkata – 700016
 - Kankurgachi – P-328 CIT Road, Kolkata – 700054
 - Salt Lake – 34, DA Block, Sector 1, Salt Lake, Kolkata – 700064
+- Topsia - Zen (added 2026; rented/shared, like Kankurgachi and Salt Lake)
+
+> **Topsia's option text is deliberately `Topsia - Zen`** — plain hyphen, no
+> address — because that is exactly what the four existing students carry in
+> `Enrollments`. Matching the other centres' `Name – Address` style would have
+> meant re-keying those rows, and receipts and records match on this string.
+> Consistent data beat tidy data. **Its street address is still needed** for
+> `index.html` (branch card and the Google Maps link), which is why the public
+> site has not been updated — see §5A.
 
 **Dance styles (4):** Odissi (Classical), Semi-Classical, Bollywood, Western
 
@@ -117,6 +126,15 @@ A centre appears in **3 files across 7 places**. Miss one and the centre won't s
 
 **Then:** upload all 3 files to GitHub (remember the SCRIPT_URL check for register.html).
 **Update Section 3 of this README** with the new centre.
+**Add the centre name to `KNOWN_CENTRES` in `Code.gs`**, or `matchCentre_` will
+not recognise it and every centre-wise report will mis-group those students.
+
+> **Topsia, October 2026 — done except the website.** `KNOWN_CENTRES`, both
+> `register.html` dropdowns, both admin dropdowns, both footer strips and §3
+> above are updated. `index.html` is **not**: it still says "Four locations",
+> the stat pill still reads 4, and there is no Topsia branch card, because a
+> card needs a street address for its Maps link. Supply the address and that is
+> a four-line change.
 
 > **Important:** the exact `<option>` text must be IDENTICAL in register.html and admin, because receipts and records match on this text. Copy-paste, don't retype.
 
@@ -536,6 +554,116 @@ and the row stays one row with its comings and goings in the diary.
 `On hold` is its own figure beside Active and Left, and held months show as
 `HOLD` in the student grid rather than `UNPAID` or blank — so a pause stays
 visible in the history instead of looking like full attendance.
+
+---
+
+## 11-C2. One-off fees — who has not paid
+
+Monthly tuition is inferable: a student active in September owes September.
+A once-a-year charge is not — **nothing in the sheet says an Annual Show Fee
+was ever expected**. So the expectation is stated rather than guessed:
+
+- **Expected from** every active student (`billable`, not `Left`).
+- **A receipt counts** when its `Fee Year` is that year. Where `Fee Year` is
+  blank the date is used and the row is flagged, never silently trusted.
+- **Exclusions** are a `Waiver` row on `Fee Exemptions` with the fee type named
+  in the new **Fee Type** column.
+
+| Menu item | What it does |
+|-----------|--------------|
+| **One-off fee — who is pending** | Asks which fee and which year, then reports paid / part paid / waived / pending. Writes nothing. |
+
+The default fee type is the `Config` row **`oneoff_fee`** — add one with the
+fee you check most often and the prompt pre-fills it. With no default, the
+prompt lists the fee types it found in the receipts. `Code.gs` still names no
+fee type anywhere: the panel's dropdown remains the only list (§5E), and a test
+enforces it.
+
+### Amounts: the fee has more than one rate
+
+**The first version of this got it wrong, instructively.** It took the
+commonest amount paid as *the* rate and called everything below it a part
+payment. On the real 2026 data that flagged twenty families as owing money:
+they had each paid exactly ₹1,800 where 179 paid exactly ₹2,400. Twenty
+identical figures are a **rate**, not twenty part payments — a real part
+payment scatters.
+
+So no single standard is assumed:
+
+- Any amount paid by **3+ students, or a twentieth of all payers**, is treated
+  as a rate in its own right.
+- Paying **any** recognised rate counts as paid.
+- Only a figure **below the lowest rate** is listed as short.
+- With too few payers for any figure to read as a rate, **nothing** is called
+  short — the conservative answer on thin evidence.
+
+The report prints every amount paid with its count, marking which look like
+rates, so you can see the tiers rather than take the script's word for them.
+
+**To state the fee instead of inferring it**, add a `Config` row
+**`oneoff_expected`** with the amount. It overrides the inference and judges
+even a small sample.
+
+### Paid about twice a rate — a sibling receipt
+
+A receipt naming one child but carrying enough for two is reported separately.
+On the 2026 data that was four payments of ₹4,800 (2 × ₹2,400) and one of
+₹4,200 — which is ₹2,400 + ₹1,800, the two rates added together. Nobody pays a
+round ₹4,200 for one child.
+
+When that happens the money is in and **the sister is still in the pending
+list**, so she gets chased for a fee already paid. The report flags any payer at
+twice the lowest rate or more, and says explicitly when the figure is the exact
+sum of two known rates. The fix is to add the second name to that receipt's
+`Students` column; after that she is credited automatically.
+
+Note that per-student totals **accumulate across receipts**, so two genuine
+part payments add up to a settled fee rather than reading as two shortfalls.
+
+The report also surfaces what would otherwise go missing: receipt names not on
+the roster (money credited to nobody), and anyone who paid but is not on the
+expected list — someone who has left, or a workshop-only attendee.
+
+### Two children, one name
+
+Where a receipt name matches two students, the **Contact column on that receipt**
+settles it — the same evidence `buildFeeCoverage_` uses, and the reason the
+phone backfill was worth doing. Settled cases are listed under *shared name,
+settled by the contact number* so the inference stays visible.
+
+Only when the contact is blank, or matches neither child, is the payment left
+uncredited — and then both candidates are printed with their numbers rather
+than one being picked. A contact matching neither is never forced onto either.
+
+### The `Fee Pending` tab — filter by centre
+
+| Menu item | What it does |
+|-----------|--------------|
+| **Rebuild the Fee Pending tab (filter by centre)** | Writes the same findings to a `Fee Pending` tab with a filter on the header row. Its own tab only. |
+
+A dialog cannot be filtered or sorted, and 149 names in a scrolling box is not
+a chase list. The tab carries **Fee Type, Year, Status, Student, Centre, Phone,
+Amount paid, Receipts, Note**, sorted centre → status → name, colour-coded by
+status, with a filter already applied. Filter the Centre column to work one
+centre at a time. The dialog that follows the rebuild also prints **pending by
+centre**.
+
+Statuses are `PENDING`, `SHORT`, `CHECK - may cover a sibling`, `WAIVED`, `PAID`.
+
+### The `Fee Type` column on `Fee Exemptions`
+
+| Fee Type | Means |
+|----------|-------|
+| **blank** | Monthly tuition — exactly what every row meant before this column existed. Unchanged. |
+| **named** | That fee **only**. |
+
+This separation matters in one direction especially: a waived Annual Show Fee
+must never excuse a month's tuition. Two tests hold that line in both
+directions — a fee-scoped waiver leaves monthly fees due, and an ordinary hold
+does not settle a one-off fee.
+
+Run **Set up the Holds and History tabs** once to add the column to an existing
+`Fee Exemptions` tab; it is appended at the end, so nothing shifts.
 
 ---
 

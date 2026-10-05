@@ -1113,7 +1113,9 @@ function setPin(current, newPin) {
 
 // The Center column is also used for status words ("discontinue"), so a
 // value only becomes a Location if it actually names one of the branches.
-const KNOWN_CENTRES = ['Bhawanipur', 'Wood Street', 'Kankurgachi', 'Salt Lake'];
+// Topsia joined in 2026. The Location values in Enrollments read
+// 'Topsia - Zen', so 'Topsia' is what centreOf_ matches on.
+const KNOWN_CENTRES = ['Bhawanipur', 'Wood Street', 'Kankurgachi', 'Salt Lake', 'Topsia'];
 
 function matchCentre_(v) {
   const t = (v || '').toString().trim().toLowerCase();
@@ -2744,7 +2746,11 @@ const EXEMPT_TAB = 'Fee Exemptions';
 
 const EXEMPT_HEADERS = [
   'Student ID', 'Student Name', 'Type', 'From Month', 'To Month',
-  'Expected Return', 'Reason', 'Approved By', 'Approved On', 'Note', 'Recorded At'
+  'Expected Return', 'Reason', 'Approved By', 'Approved On', 'Note', 'Recorded At',
+  // Blank means monthly tuition, which is what every row meant before this
+  // column existed. Naming a fee type here scopes the row to that fee ALONE —
+  // a waived show fee must never excuse a month's tuition as a side effect.
+  'Fee Type'
 ];
 
 const EXEMPT_TYPES = ['Hold', 'Gap (left and rejoined)', 'Waiver'];
@@ -2790,6 +2796,7 @@ function readExemptions_() {
   const iTo   = head.indexOf('To Month');
   const iExp  = head.indexOf('Expected Return');
   const iWhy  = head.indexOf('Reason');
+  const iFee  = head.indexOf('Fee Type');
 
   for (let r = 1; r < data.length; r++) {
     const row = data[r];
@@ -2805,7 +2812,8 @@ function readExemptions_() {
       type: (iType >= 0 ? norm(row[iType]) : '') || 'Hold',
       from: from, to: to, open: !toRaw,
       expect: iExp >= 0 ? parsePeriod_(row[iExp]) : -1,
-      reason: iWhy >= 0 ? norm(row[iWhy]) : ''
+      reason: iWhy >= 0 ? norm(row[iWhy]) : '',
+      feeType: iFee >= 0 ? norm(row[iFee]) : ''
     };
 
     // A month that cannot be read would silently excuse nothing, or the wrong
@@ -2885,6 +2893,11 @@ function exemptAt_(s, period) {
   const list = s.exempt || [];
   for (let i = 0; i < list.length; i++) {
     const e = list[i];
+    // A row naming a fee type belongs to that fee, not to tuition. Without
+    // this test a waived Annual Show Fee would stop a month's fees being
+    // asked for — the quiet kind of wrong that shows up as missing revenue
+    // months later.
+    if (e.feeType) continue;
     const end = e.to >= 0 ? e.to : periodNow_();
     if (period >= e.from && period <= end) return e;
   }
@@ -4266,6 +4279,10 @@ function onOpen() {
       .addItem('Rejoins with no gap recorded', 'showRejoinGaps')
       .addItem('Set up the Holds and History tabs', 'showHoldsSetup')
       .addSeparator()
+      .addItem('Annual Show Fee - who is pending', 'showAnnualShowFeePending')
+      .addItem('Any one-off fee - who is pending', 'showOneOffFeePending')
+      .addItem('Rebuild the Fee Pending tab (filter by centre)', 'showFeePendingTab')
+      .addSeparator()
       .addItem('Duplicate receipt NUMBERS (writes nothing)', 'showDuplicateNumbers')
       .addItem('Duplicate receipts report (writes nothing)', 'showDuplicates')
       .addItem('Rebuild the Duplicate Review tab', 'showDuplicateReviewTab')
@@ -4442,6 +4459,25 @@ function setUpHoldsAndHistory() {
   const ex   = ensureExemptionsTab_();
   const hist = ensureHistoryTab_();
 
+  // The Fee Type column arrived after the tab did, so an existing tab needs it
+  // appended. At the end, as every added column is, so nothing shifts under
+  // the rows already there.
+  let addedFeeCol = false;
+  (function () {
+    const width = Math.max(1, ex.getLastColumn());
+    const head  = ex.getRange(1, 1, 1, width).getValues()[0]
+                    .map(function (v) { return (v === null ? '' : v.toString().trim()); });
+    if (head.indexOf('Fee Type') >= 0) return;
+    ex.getRange(1, width + 1).setValue('Fee Type')
+      .setFontWeight('bold').setBackground('#2C1A0E').setFontColor('#FFFFFF')
+      .setNote('Blank = monthly tuition, which is what every row meant before\n' +
+               'this column existed.\n\n' +
+               'Naming a fee type here scopes the row to THAT FEE ONLY. A waived\n' +
+               'Annual Show Fee will not excuse a month of tuition.');
+    ex.setColumnWidth(width + 1, 150);
+    addedFeeCol = true;
+  })();
+
   // Dropdowns on the two columns where a typo would be silent.
   ex.getRange(2, 3, Math.max(500, ex.getMaxRows() - 1), 1).setDataValidation(
     SpreadsheetApp.newDataValidation()
@@ -4453,7 +4489,8 @@ function setUpHoldsAndHistory() {
   let out = 'SET UP\n======\n';
   out += EXEMPT_TAB + ' : ' + (madeEx   ? 'created' : 'already there, left alone') + '\n';
   out += HISTORY_TAB + '   : ' + (madeHist ? 'created' : 'already there, left alone') + '\n\n';
-  out += 'Dropdowns refreshed on Type and Actually.\n\n';
+  out += 'Dropdowns refreshed on Type and Actually.\n';
+  out += 'Fee Type column : ' + (addedFeeCol ? 'added' : 'already there') + '\n\n';
   out += 'From now on, editing Status or Left On in Enrollments writes a line\n';
   out += 'to ' + HISTORY_TAB + ' by itself. Nothing to remember.\n';
   Logger.log(out);
@@ -5322,4 +5359,551 @@ function applyContactBackfill() {
   out += 'Re-running is safe: the cells are no longer blank, so it does nothing.\n';
   Logger.log(out);
   return out;
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// Who has not paid a one-off fee?
+// ───────────────────────────────────────────────────────────────
+// Monthly tuition can be inferred: a student active in September owes
+// September. A once-a-year charge cannot — nothing in the sheet says an Annual
+// Show Fee was ever expected. So the expectation is stated here rather than
+// guessed: every active student owes it, and anyone who should not is given a
+// Waiver row on the Fee Exemptions tab scoped to that fee type.
+//
+// A receipt counts towards a year if its Fee Year says that year. Where Fee
+// Year is blank the date is used instead and the row is flagged, never
+// silently trusted.
+//
+// This is a pass of its own rather than a hook into buildFeeCoverage_, which
+// drops non-monthly receipts before it attributes them to anyone. Reaching
+// into that loop would have changed the numbers every existing report prints,
+// so the deliberate trade is a little duplication for no disturbance.
+
+// A fee type counts as tuition when it starts with 'monthly' — the one rule
+// Code.gs has ever had about fee names, and this reuses it rather than adding
+// a second list to keep in step.
+function isMonthlyFeeName_(t) {
+  return normName_(t).indexOf('monthly') === 0;
+}
+
+// Every student a one-off fee is expected from: on the roster, not left, and
+// a real ongoing student rather than a one-off workshop attendee.
+function oneOffExpectedFrom_(cov) {
+  return cov.students.filter(function (s) { return s.billable && !s.left; });
+}
+
+// Waived for THIS fee type? Only a Fee Exemptions row naming the fee type
+// counts here, and such a row never touches monthly coverage — a show-fee
+// waiver must not quietly excuse a month's tuition.
+function waivedForFee_(s, feeTypeName, year) {
+  const list = s.exempt || [];
+  const want = normName_(feeTypeName);
+  for (let i = 0; i < list.length; i++) {
+    const e = list[i];
+    if (normName_(e.feeType || '') !== want) continue;
+    const end = e.to >= 0 ? e.to : periodNow_();
+    // Any overlap with the year is enough: a waiver is for the campaign, not
+    // for particular months of it.
+    if (e.from <= year * 12 + 11 && end >= year * 12) return e;
+  }
+  return null;
+}
+
+function oneOffFeeStatus_(feeTypeName, year) {
+  const cov = buildFeeCoverage_();
+  const norm = function (v) { return (v === null || v === undefined) ? '' : v.toString().trim(); };
+  const want = normName_(feeTypeName);
+
+  const rData = getSheet('Receipts').getDataRange().getValues();
+  const rHead = rData[0].map(norm);
+  const rNo   = rHead.indexOf('Receipt No');
+  const rName = rHead.indexOf('Student Name');
+  const rStu  = rHead.indexOf('Students');
+  const rType = rHead.indexOf('Fee Type');
+  const rYr   = rHead.indexOf('Fee Year');
+  const rAmt  = headerIndex_(rHead, 'Amount');
+  const rSpl  = rHead.indexOf('Fee Split');
+  const rRecd = rHead.indexOf('Date Received');
+  const rIss  = rHead.indexOf('Issued At');
+  const rCon  = rHead.indexOf('Contact');
+
+  // Roster index by normalised name. Two children sharing a name cannot be
+  // told apart by name alone, so they are marked and reported rather than
+  // credited to whichever came first.
+  const byKey = {};
+  cov.students.forEach(function (s) { (byKey[s.key] = byKey[s.key] || []).push(s); });
+
+  const paid = {};                 // student row -> {amount, receipts[], guessedYear}
+  const unmatched = [], ambiguousName = [], wrongYear = [], resolvedByPhone = [];
+
+  for (let i = 1; i < rData.length; i++) {
+    const row = rData[i];
+    if (rNo >= 0 && !norm(row[rNo])) continue;
+
+    const typeStr = rType >= 0 ? norm(row[rType]) : '';
+    const split   = rSpl >= 0 ? parseFeeSplit_(row[rSpl]) : [];
+    const hasType = normName_(typeStr) === want ||
+                    typeStr.split('+').some(function (t) { return normName_(t) === want; }) ||
+                    split.some(function (p) {
+                      return (p.fees || []).some(function (f) { return normName_(f.type) === want; });
+                    });
+    if (!hasType) continue;
+
+    // Which year does this receipt belong to?
+    let yr = parseInt(rYr >= 0 ? norm(row[rYr]) : '', 10) || 0;
+    let guessed = false;
+    if (!yr) {
+      const p = parsePeriod_(rRecd >= 0 && norm(row[rRecd]) ? row[rRecd]
+                             : (rIss >= 0 ? row[rIss] : ''));
+      if (p >= 0) { yr = Math.floor(p / 12); guessed = true; }
+    }
+    if (yr !== year) {
+      if (yr) wrongYear.push({ no: norm(row[rNo]), yr: yr });
+      else wrongYear.push({ no: norm(row[rNo]), yr: 0 });
+      continue;
+    }
+
+    // Who paid it, and how much of it was this fee. A split states both; a
+    // receipt of exactly this fee type gives its whole amount; a combined fee
+    // type with no split says who but not how much.
+    const whole = parseFloat(norm(rAmt >= 0 ? row[rAmt] : '').replace(/[^0-9.]/g, '')) || 0;
+    const contact = rCon >= 0 ? digitsOf_(row[rCon]) : '';
+    let pairs = [];
+    if (split.length) {
+      split.forEach(function (p) {
+        let amt = 0;
+        (p.fees || []).forEach(function (f) { if (normName_(f.type) === want) amt += Number(f.amount) || 0; });
+        if (amt > 0) pairs.push({ name: p.student, amount: amt, known: true });
+      });
+    }
+    if (!pairs.length) {
+      const names = splitReceiptNames_(rStu >= 0 ? norm(row[rStu]) : '',
+                                       rName >= 0 ? norm(row[rName]) : '');
+      const only = normName_(typeStr) === want;
+      names.forEach(function (n) {
+        pairs.push({ name: n, amount: only ? whole / Math.max(1, names.length) : 0, known: only });
+      });
+    }
+
+    pairs.forEach(function (p) {
+      const key = normName_(p.name);
+      const hits = byKey[key] || [];
+      if (!hits.length) { unmatched.push({ no: norm(row[rNo]), name: p.name }); return; }
+
+      // Two children answer to one name. The receipt's own Contact column
+      // settles it — the same evidence buildFeeCoverage_ already uses, and the
+      // reason the phone backfill was worth doing. Asking a person to look up
+      // a number sitting in the same row is not a judgement call; it is a gap.
+      let s = hits[0];
+      if (hits.length > 1) {
+        const byPhone = contact
+          ? hits.filter(function (h) { return h.phone && h.phone === contact; }) : [];
+        if (byPhone.length === 1) {
+          s = byPhone[0];
+          resolvedByPhone.push({ no: norm(row[rNo]), name: p.name, to: s.name, phone: contact });
+        } else {
+          ambiguousName.push({ no: norm(row[rNo]), name: p.name, n: hits.length,
+                               contact: contact,
+                               candidates: hits.map(function (h) {
+                                 return h.name + (h.phone ? ' (' + h.phone + ')' : ' (no phone)');
+                               }) });
+          return;
+        }
+      }
+      const rec = paid[s.row] || { student: s, amount: 0, receipts: [], guessed: false, known: true };
+      rec.amount += p.amount;
+      if (!p.known) rec.known = false;
+      if (guessed) rec.guessed = true;
+      rec.receipts.push(norm(row[rNo]));
+      paid[s.row] = rec;
+    });
+  }
+
+  // Which amounts were actually paid, and how often.
+  //
+  // The first version of this took the commonest amount as THE rate and called
+  // everything below it a part payment. On the real data that labelled twenty
+  // families as owing money: they had each paid exactly 1,800 where most paid
+  // exactly 2,400, because the fee has more than one rate. Twenty identical
+  // figures are a rate, not twenty part payments — a real part payment
+  // scatters.
+  //
+  // So no single standard is assumed. Any amount several students paid is
+  // treated as a rate in its own right, and only a figure below every one of
+  // them is worth questioning.
+  const counts = {};
+  Object.keys(paid).forEach(function (k) {
+    const a = paid[k].amount;
+    if (a > 0 && paid[k].known) counts[a] = (counts[a] || 0) + 1;
+  });
+  const payerCount = Object.keys(counts).reduce(function (n, a) { return n + counts[a]; }, 0);
+  // Enough students on the same figure for it to be a price rather than a
+  // coincidence: three, or a twentieth of everyone who paid.
+  const rateFloor = Math.max(3, Math.ceil(payerCount / 20));
+  const rates = Object.keys(counts).map(Number)
+                  .filter(function (a) { return counts[a] >= rateFloor; })
+                  .sort(function (x, y) { return x - y; });
+  const lowestRate = rates.length ? rates[0] : 0;
+  let standard = 0, best = 0;
+  Object.keys(counts).forEach(function (a) {
+    if (counts[a] > best) { best = counts[a]; standard = Number(a); }
+  });
+  // An amount stated in Config wins over anything inferred from the data.
+  const stated = parseFloat((readConfig('oneoff_expected') || '').replace(/[^0-9.]/g, '')) || 0;
+
+  const expected = oneOffExpectedFrom_(cov);
+  const out = { feeType: feeTypeName, year: year, standard: standard, standardSeen: best,
+                rates: rates, lowestRate: lowestRate, stated: stated,
+                payerCount: payerCount, rateFloor: rateFloor,
+                paid: [], part: [], pending: [], waived: [],
+                unmatched: unmatched, ambiguousName: ambiguousName, wrongYear: wrongYear,
+                resolvedByPhone: resolvedByPhone,
+                expectedCount: expected.length, amounts: counts };
+
+  expected.forEach(function (s) {
+    const w = waivedForFee_(s, feeTypeName, year);
+    const p = paid[s.row];
+    if (p) {
+      const row = { s: s, amount: p.amount, receipts: p.receipts,
+                    guessed: p.guessed, known: p.known };
+      // Short only if it is below a stated expected amount, or below every
+      // rate the data shows. Paying one of several legitimate rates is paying.
+      const bar = stated || lowestRate;
+      if (bar && p.known && p.amount < bar) out.part.push(row);
+      else out.paid.push(row);
+
+      // Paid about twice a rate, or the sum of two of them? That is the shape
+      // of a receipt covering siblings with only one name on it — the money is
+      // in, and the sister is still sitting in the pending list. 4,200 where
+      // the rates are 1,800 and 2,400 is nobody's idea of one child's fee.
+      if (lowestRate && p.known && p.amount >= lowestRate * 2) {
+        const sums = [];
+        rates.forEach(function (a) { rates.forEach(function (b) { sums.push(a + b); }); });
+        row.looksLikeTwo = sums.indexOf(p.amount) >= 0;
+        row.multiple = p.amount / lowestRate;
+        out.maybeSibling = out.maybeSibling || [];
+        out.maybeSibling.push(row);
+      }
+    } else if (w) {
+      out.waived.push({ s: s, why: w.reason || w.type || 'waiver' });
+    } else {
+      out.pending.push({ s: s });
+    }
+  });
+
+  // Someone who paid but is not on the expected list at all — left, or a
+  // workshop-only attendee. Money received, so it must not vanish.
+  const expectedRows = {};
+  expected.forEach(function (s) { expectedRows[s.row] = true; });
+  out.paidButNotExpected = Object.keys(paid)
+    .filter(function (k) { return !expectedRows[k]; })
+    .map(function (k) { return paid[k]; });
+
+  return out;
+}
+
+function oneOffFeeReport_(feeTypeName, year) {
+  if (isMonthlyFeeName_(feeTypeName)) {
+    return 'That is monthly tuition. Use the Fee gaps report for it — it works\n' +
+           'month by month, which this report deliberately does not.\n';
+  }
+  const r = oneOffFeeStatus_(feeTypeName, year);
+  const settled = r.paid.length + r.part.length + r.waived.length;
+
+  let out = (feeTypeName + ' - ' + year).toUpperCase() + '\n';
+  out += new Array(Math.max(10, (feeTypeName + ' - ' + year).length + 1)).join('=') + '\n';
+  out += 'Expected from (active students) : ' + r.expectedCount + '\n';
+  out += 'Paid in full                    : ' + r.paid.length + '\n';
+  out += 'Short of every known rate       : ' + r.part.length + '\n';
+  if (r.maybeSibling && r.maybeSibling.length) {
+    out += 'Paid ~2x a rate (sibling?)      : ' + r.maybeSibling.length + '\n';
+  }
+  out += 'Waived                          : ' + r.waived.length + '\n';
+  out += 'STILL PENDING                   : ' + r.pending.length + '\n';
+  if (r.payerCount) {
+    out += '\nAMOUNTS PAID\n';
+    Object.keys(r.amounts).map(Number).sort(function (x, y) { return y - x; })
+      .forEach(function (a) {
+        const n = r.amounts[a];
+        out += '  ' + pad_(money_(a), 12) + pad_(n + (n === 1 ? ' student' : ' students'), 14) +
+               (r.rates.indexOf(a) >= 0 ? 'looks like a rate' : '') + '\n';
+      });
+    if (r.stated) {
+      out += '\nExpected amount (Config oneoff_expected) : ' + money_(r.stated) + '\n';
+      out += 'Anyone below this is listed as short.\n';
+    } else if (r.rates.length > 1) {
+      out += '\nThis fee has ' + r.rates.length + ' rates, not one: ' +
+             r.rates.map(money_).join(', ') + '.\n';
+      out += 'Paying any of them counts as paid. Only a figure below the lowest\n';
+      out += '(' + money_(r.lowestRate) + ') is listed as short — which is why a whole tier is\n';
+      out += 'no longer mistaken for a tier of defaulters.\n';
+    } else if (r.rates.length === 1) {
+      out += '\nOne rate seen: ' + money_(r.lowestRate) + '. Anything below it is listed as short.\n';
+    } else {
+      out += '\nNo amount was paid by enough students (' + r.rateFloor + '+) to read as a rate,\n';
+      out += 'so nothing is called short. Set Config "oneoff_expected" to judge it.\n';
+    }
+  } else {
+    out += '\nNo amounts recorded yet, so short payments cannot be judged.\n';
+  }
+  out += '\n';
+
+  if (r.pending.length) {
+    out += 'STILL PENDING (' + r.pending.length + ')\n';
+    r.pending.forEach(function (x) {
+      out += '  ' + pad_(x.s.name, 28) + pad_(x.s.centre || '(no centre)', 16) +
+             (x.s.phone || '(no phone)') + '\n';
+    });
+    out += '\n';
+  } else {
+    out += 'Nobody is pending.\n\n';
+  }
+
+  if (r.part.length) {
+    out += 'SHORT - below ' + money_(r.stated || r.lowestRate) + ' (' + r.part.length + ')\n';
+    r.part.forEach(function (x) {
+      out += '  ' + pad_(x.s.name, 28) + pad_(money_(x.amount), 12) +
+             'receipt ' + x.receipts.join(', ') + '\n';
+    });
+    out += '\n';
+  }
+  if (r.waived.length) {
+    out += 'WAIVED (' + r.waived.length + ')\n';
+    r.waived.forEach(function (x) { out += '  ' + pad_(x.s.name, 28) + x.why + '\n'; });
+    out += '\n';
+  }
+  if (r.maybeSibling && r.maybeSibling.length) {
+    out += 'PAID ABOUT TWICE A RATE - MAY COVER A SIBLING (' + r.maybeSibling.length + ')\n';
+    out += 'One name on the receipt, enough money for two children. If so, a\n';
+    out += 'sister is in the pending list above having already been paid for.\n';
+    out += 'Check the receipt and add the second name to its Students column.\n';
+    r.maybeSibling.forEach(function (x) {
+      out += '  ' + pad_(x.s.name, 26) + pad_(money_(x.amount), 12) +
+             pad_('receipt ' + x.receipts.join(', '), 24) +
+             (x.looksLikeTwo ? 'exactly two rates added together' : '') + '\n';
+    });
+    out += '\n';
+  }
+  if (r.unmatched.length) {
+    out += 'NAMES ON RECEIPTS THAT ARE NOT ON THE ROSTER (' + r.unmatched.length + ')\n';
+    out += 'These payments are not credited to anyone. The student may be spelt\n';
+    out += 'differently, or may have left.\n';
+    r.unmatched.forEach(function (x) { out += '  ' + pad_(x.no, 16) + x.name + '\n'; });
+    out += '\n';
+  }
+  if (r.resolvedByPhone.length) {
+    out += 'SHARED NAME, SETTLED BY THE CONTACT NUMBER (' + r.resolvedByPhone.length + ')\n';
+    r.resolvedByPhone.forEach(function (x) {
+      out += '  ' + pad_(x.no, 16) + pad_(x.name, 22) + '-> ' + pad_(x.to, 22) + x.phone + '\n';
+    });
+    out += '\n';
+  }
+  if (r.ambiguousName.length) {
+    out += 'SHARED NAME AND THE CONTACT DID NOT SETTLE IT (' + r.ambiguousName.length + ')\n';
+    out += 'Not credited to anyone: picking one would be a guess.\n';
+    r.ambiguousName.forEach(function (x) {
+      out += '  ' + pad_(x.no, 16) + pad_(x.name, 22) +
+             'receipt contact ' + (x.contact || 'blank') + '\n';
+      (x.candidates || []).forEach(function (c) { out += '      candidate: ' + c + '\n'; });
+    });
+    out += '\n';
+  }
+  if (r.paidButNotExpected.length) {
+    out += 'PAID BUT NOT ON THE EXPECTED LIST (' + r.paidButNotExpected.length + ')\n';
+    out += 'Left, or a workshop-only attendee. Counted nowhere above.\n';
+    r.paidButNotExpected.forEach(function (x) {
+      out += '  ' + pad_(x.student.name, 28) + money_(x.amount) + '\n';
+    });
+    out += '\n';
+  }
+  const guessedN = r.paid.concat(r.part).filter(function (x) { return x.guessed; }).length;
+  if (guessedN) {
+    out += 'NOTE: ' + guessedN + ' receipt(s) had no Fee Year; the year was taken from\n';
+    out += 'the date instead. Fill Fee Year in to make this exact.\n\n';
+  }
+  if (r.wrongYear.length) {
+    out += r.wrongYear.length + ' ' + feeTypeName + ' receipt(s) belong to another year and\n';
+    out += 'were ignored here.\n\n';
+  }
+
+  out += 'Settled ' + settled + ' of ' + r.expectedCount + '. Report only; nothing was changed.\n';
+  Logger.log(out);
+  return out;
+}
+
+// ─── The pending list as a tab you can filter ─────────────────
+// A dialog cannot be filtered or sorted, and 149 names in a scrolling box is
+// not a chase list. This writes the same findings to a tab with a real centre
+// column and a filter on the header row, so Anjali can take one centre at a
+// time. Its own tab only; Enrollments and Receipts are never touched.
+const FEE_PENDING_TAB = 'Fee Pending';
+
+const FEE_PENDING_HEADERS = [
+  'Fee Type', 'Year', 'Status', 'Student', 'Centre', 'Phone',
+  'Amount paid', 'Receipts', 'Note'
+];
+
+function buildFeePendingTab(feeTypeName, year) {
+  if (!feeTypeName) feeTypeName = readConfig('oneoff_fee').trim();
+  if (!feeTypeName) return 'No fee type given, and Config has no "oneoff_fee" row.';
+  if (!year) year = new Date().getFullYear();
+  if (isMonthlyFeeName_(feeTypeName)) {
+    return 'That is monthly tuition. The Fee gaps report covers it month by month.';
+  }
+
+  const r = oneOffFeeStatus_(feeTypeName, year);
+  const rows = [];
+  const line = function (status, s, amount, receipts, note) {
+    rows.push([feeTypeName, year, status, s.name, s.centre || '(no centre)',
+               s.phone || '', amount || '', receipts || '', note || '']);
+  };
+  r.pending.forEach(function (x) { line('PENDING', x.s, '', '', ''); });
+  r.part.forEach(function (x) {
+    line('SHORT', x.s, x.amount, x.receipts.join(', '),
+         'below the lowest rate ' + money_(r.stated || r.lowestRate));
+  });
+  (r.maybeSibling || []).forEach(function (x) {
+    line('CHECK - may cover a sibling', x.s, x.amount, x.receipts.join(', '),
+         x.looksLikeTwo ? 'exactly two rates added together' : 'about twice a rate');
+  });
+  r.waived.forEach(function (x) { line('WAIVED', x.s, '', '', x.why); });
+  r.paid.forEach(function (x) {
+    line('PAID', x.s, x.amount, x.receipts.join(', '), x.guessed ? 'year taken from the date' : '');
+  });
+
+  // Centre, then status, then name: a centre's chase list reads top to bottom.
+  const ORDER = { 'PENDING': 0, 'SHORT': 1, 'CHECK - may cover a sibling': 2,
+                  'WAIVED': 3, 'PAID': 4 };
+  rows.sort(function (a, b) {
+    return a[4].localeCompare(b[4]) ||
+           (ORDER[a[2]] - ORDER[b[2]]) ||
+           a[3].localeCompare(b[3]);
+  });
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let tab = ss.getSheetByName(FEE_PENDING_TAB);
+  if (!tab) tab = ss.insertSheet(FEE_PENDING_TAB);
+
+  // An old filter survives a clear() and then refuses a new one.
+  try { const f = tab.getFilter(); if (f) f.remove(); } catch (noFilter) {}
+  tab.clear();
+  if (tab.getMaxColumns() < FEE_PENDING_HEADERS.length) {
+    tab.insertColumnsAfter(tab.getMaxColumns(),
+                           FEE_PENDING_HEADERS.length - tab.getMaxColumns());
+  }
+  tab.getRange(1, 1, 1, FEE_PENDING_HEADERS.length)
+     .setValues([FEE_PENDING_HEADERS])
+     .setFontWeight('bold').setBackground('#2C1A0E').setFontColor('#FFFFFF');
+  tab.setFrozenRows(1);
+
+  if (!rows.length) {
+    tab.getRange(2, 1).setValue('Nobody is expected to pay ' + feeTypeName + ' for ' + year + '.');
+    return 'Nothing to list.';
+  }
+
+  tab.getRange(2, 1, rows.length, FEE_PENDING_HEADERS.length).setValues(rows);
+  const cAmt = FEE_PENDING_HEADERS.indexOf('Amount paid') + 1;
+  tab.getRange(2, cAmt, rows.length, 1).setNumberFormat('₹#,##0');
+
+  const SHADE = { 'PENDING': '#FDEAEA', 'SHORT': '#FFF3CD',
+                  'CHECK - may cover a sibling': '#E4EEFB',
+                  'WAIVED': '#E6F4EA', 'PAID': '#FFFFFF' };
+  rows.forEach(function (row, i) {
+    tab.getRange(i + 2, 1, 1, FEE_PENDING_HEADERS.length)
+       .setBackground(SHADE[row[2]] || '#FFFFFF');
+  });
+
+  tab.getRange(1, 1, rows.length + 1, FEE_PENDING_HEADERS.length).createFilter();
+  tab.setColumnWidth(FEE_PENDING_HEADERS.indexOf('Student') + 1, 200);
+  tab.setColumnWidth(FEE_PENDING_HEADERS.indexOf('Centre') + 1, 240);
+  tab.setColumnWidth(FEE_PENDING_HEADERS.indexOf('Status') + 1, 180);
+  tab.setColumnWidth(FEE_PENDING_HEADERS.indexOf('Note') + 1, 260);
+
+  const byCentre = {};
+  r.pending.forEach(function (x) {
+    const k = x.s.centre || '(no centre)';
+    byCentre[k] = (byCentre[k] || 0) + 1;
+  });
+  let out = 'FEE PENDING TAB REBUILT\n=======================\n';
+  out += feeTypeName + ' - ' + year + '\n\n';
+  out += 'Rows written : ' + rows.length + '\n';
+  out += 'Pending      : ' + r.pending.length + '\n\n';
+  out += 'PENDING BY CENTRE\n';
+  Object.keys(byCentre).sort().forEach(function (k) {
+    out += '  ' + pad_(k, 42) + byCentre[k] + '\n';
+  });
+  out += '\nFilter the Centre column on the tab to take one centre at a time.\n';
+  out += 'No receipt or roster row was touched.\n';
+  Logger.log(out);
+  return out;
+}
+
+function showFeePendingTab() {
+  let feeType = readConfig('oneoff_fee').trim();
+  let year = new Date().getFullYear();
+  const seen = oneOffFeeTypesSeen_();
+  try {
+    const ui = SpreadsheetApp.getUi();
+    const a = ui.prompt('Which fee?',
+      'Fee type exactly as it appears on receipts:' +
+      (feeType ? '\n(blank = ' + feeType + ')' : '') +
+      (seen.length ? '\n\nFound in the receipts:\n  ' + seen.join('\n  ') : ''),
+      ui.ButtonSet.OK_CANCEL);
+    if (a.getSelectedButton() !== ui.Button.OK) return 'Cancelled.';
+    if (a.getResponseText().trim()) feeType = a.getResponseText().trim();
+    const b = ui.prompt('Which year?', 'Calendar year on the receipt:\n(blank = ' + year + ')',
+                        ui.ButtonSet.OK_CANCEL);
+    if (b.getSelectedButton() !== ui.Button.OK) return 'Cancelled.';
+    const y = parseInt(b.getResponseText().trim(), 10);
+    if (y) year = y;
+  } catch (noUi) { /* editor */ }
+  return report_(buildFeePendingTab(feeType, year));
+}
+
+// The one-off fee types actually present in the receipts, so the prompt can
+// offer real choices instead of asking Saurav to remember the exact wording.
+// Derived from the data: Code.gs names no fee type anywhere, by long-standing
+// rule, because the panel's dropdown is the only list there is.
+function oneOffFeeTypesSeen_() {
+  const cov = buildFeeCoverage_();
+  return cov.feeTypes.filter(function (t) {
+    return t && !isMonthlyFeeName_(t) && t !== '(not stated)';
+  }).sort();
+}
+
+// Menu entry. The default fee type lives in Config under 'oneoff_fee' so it
+// can be changed without touching code; with no default set, the prompt lists
+// what the receipts contain.
+function showOneOffFeePending() {
+  let feeType = readConfig('oneoff_fee').trim();
+  let year = new Date().getFullYear();
+  const seen = oneOffFeeTypesSeen_();
+
+  try {
+    const ui = SpreadsheetApp.getUi();
+    const a = ui.prompt('Which fee?',
+      'Fee type exactly as it appears on receipts:' +
+      (feeType ? '\n(blank = ' + feeType + ')' : '') +
+      (seen.length ? '\n\nFound in the receipts:\n  ' + seen.join('\n  ') : ''),
+      ui.ButtonSet.OK_CANCEL);
+    if (a.getSelectedButton() !== ui.Button.OK) return 'Cancelled.';
+    if (a.getResponseText().trim()) feeType = a.getResponseText().trim();
+
+    const b = ui.prompt('Which year?', 'Calendar year on the receipt:\n(blank = ' + year + ')',
+                        ui.ButtonSet.OK_CANCEL);
+    if (b.getSelectedButton() !== ui.Button.OK) return 'Cancelled.';
+    const y = parseInt(b.getResponseText().trim(), 10);
+    if (y) year = y;
+  } catch (noUi) {
+    // Editor, no dialogs: Config and this year stand.
+  }
+
+  if (!feeType) {
+    return report_('No fee type given, and Config has no "oneoff_fee" row.\n\n' +
+      (seen.length ? 'Fee types found in the receipts:\n  ' + seen.join('\n  ') + '\n\n' : '') +
+      'Add a Config row "oneoff_fee" with the one you check most often, or\n' +
+      'type it at the prompt.\n');
+  }
+  return report_(oneOffFeeReport_(feeType, year));
 }
