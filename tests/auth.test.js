@@ -52,8 +52,14 @@ function makeSheet(rows) {
 
 function freshWorld(pin) {
   const sheets = {
+    // The name lists live in Config now, not in Code.gs — they are children's
+    // names and the repository is public. Seeded here so the fixtures that
+    // depend on them exercise the config path as the real sheet does.
     Config: makeSheet([['Key', 'Value'], ['pin', pin], ['receipt_seq', '1'],
-                       ['notify_email', ''], ['notify_whatsapp', ''], ['callmebot_key', '']]),
+                       ['notify_email', ''], ['notify_whatsapp', ''], ['callmebot_key', ''],
+                       ['name_equivalents',  'Vani Maskara = Vaani Maskara'],
+                       ['distinct_students', 'Jia Bhimani = Jeena Bhimani | ' +
+                                             'Jahnvi Jain = Janhvi Jain']]),
     Enrollments: makeSheet([
       ['ID', 'Enrolled At', 'Type', 'Student Name', 'Date of Birth', 'Gender', 'Blood Group',
        'School/College', 'Guardian Name', 'Relation', 'Phone', 'WhatsApp', 'Email', 'Address',

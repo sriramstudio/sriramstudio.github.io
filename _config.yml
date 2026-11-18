@@ -1,0 +1,31 @@
+# GitHub Pages publishes everything in the repository root by default, so
+# https://sriramstudio.github.io/Code.gs served the backend source — along with
+# CLAUDE.md, the README and the test suite — to anyone who asked for it.
+#
+# Only the three public pages belong on the website. Everything else listed
+# here is excluded from what Pages builds.
+#
+# This does NOT make the repository private: the same files are still readable
+# on github.com. It closes the easier door, not the only one.
+
+include:
+  - index.html
+  - register.html
+  - sriramstudio_admin.html
+
+exclude:
+  - Code.gs
+  - appsscript.json
+  - CLAUDE.md
+  - README.md
+  - deploy.cmd
+  - rollback.cmd
+  - tests/
+  - Archive/
+  - archive/
+  - .clasp.json
+  - .claspignore
+  - "*.xlsx"
+  - "*.xls"
+  - "*.csv"
+  - "*.md"
