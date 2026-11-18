@@ -1508,7 +1508,7 @@ function addStudentChip(name, phone, program, location, id) {
   const key = studentKey(name, phone);
   const dup = selectedStudents.some(function (s) { return studentKey(s.name, s.phone) === key; });
   // Every chip gets an id of its own. Two different children really can share
-  // a name — there are two Krisha Agarwals on this roster — so the fee lines
+  // a name — there are two Tara Mitras on this roster — so the fee lines
   // must hang off something unique, never off the name.
   if (!dup) selectedStudents.push({ uid: 'c' + (++chipSeq), name: name, phone: phone || '',
                                     id: id || '',

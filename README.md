@@ -782,8 +782,8 @@ came in. Only the *coverage* spans both months.
 **Siblings.** One receipt covering `Riya Sen | Diya Sen` counts for both
 children, and so does an older receipt with `Riya & Diya Sen` typed into one
 cell — the last child on the receipt carries the surname for the rest. Names
-run together with no separator at all are handled too: `Anshika Anvika Shome`
-is read as two sisters, and `Jeena Jia` names one child from her first name and
+run together with no separator at all are handled too: `Leela Neela Bose`
+is read as two sisters, and `Meera Mira` names one child from her first name and
 lends her surname to the other. This is only accepted when every piece lands on
 a *different* child, so a single mangled name is never split by accident.
 
@@ -800,7 +800,7 @@ names them both, with their rows.
 **Two children, one name.** Where the name cannot be told apart on its own, the
 `Contact` number on the receipt is matched against `Phone` in `Enrollments` and
 settles it. **This is why filling in phone numbers matters**: two children
-called Krisha Agarwal were unattributable until their numbers were on the
+called Tara Mitra were unattributable until their numbers were on the
 roster. For an exact shared name, a child being the only one enrolled that
 month will also settle it; for a near-miss spelling that is *not* enough, and
 the report says so rather than picking one.
@@ -810,13 +810,13 @@ of `Code.gs`:
 
 ```
 const NAME_EQUIVALENTS = [
-  ['Vani Maskara', 'Vaani Maskara'],
-  ['Krishanya Kanoria', 'Krishnaya Kanodia'],
-  ['Jisha Desai', 'Josh’s Desai', "Josh's Desai"]
+  ['Asha Roy', 'Aasha Roy'],
+  ['Nitara Sen', 'Nitara Sena'],
+  ['Disha Bose', 'Dip’s Bose', "Dip's Bose"]
 ];
 const DISTINCT_STUDENTS = [
-  ['Jia Bhimani', 'Jeena Bhimani'],
-  ['Jahnvi Jain', 'Janhvi Jain']
+  ['Mira Das', 'Meera Das'],
+  ['Rohini Pal', 'Rohnii Pal']
 ];
 ```
 

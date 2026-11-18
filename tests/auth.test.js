@@ -57,9 +57,9 @@ function freshWorld(pin) {
     // depend on them exercise the config path as the real sheet does.
     Config: makeSheet([['Key', 'Value'], ['pin', pin], ['receipt_seq', '1'],
                        ['notify_email', ''], ['notify_whatsapp', ''], ['callmebot_key', ''],
-                       ['name_equivalents',  'Vani Maskara = Vaani Maskara'],
-                       ['distinct_students', 'Jia Bhimani = Jeena Bhimani | ' +
-                                             'Jahnvi Jain = Janhvi Jain']]),
+                       ['name_equivalents',  'Asha Roy = Aasha Roy'],
+                       ['distinct_students', 'Mira Das = Meera Das | ' +
+                                             'Rohini Pal = Rohnii Pal']]),
     Enrollments: makeSheet([
       ['ID', 'Enrolled At', 'Type', 'Student Name', 'Date of Birth', 'Gender', 'Blood Group',
        'School/College', 'Guardian Name', 'Relation', 'Phone', 'WhatsApp', 'Email', 'Address',
@@ -317,7 +317,7 @@ good[14] = CENTRE; good[19] = 'Google Search'; good[20] = 'Wants Odissi';
 
 // Written positionally AFTER the deletion, so values 15-24 overflowed.
 var bad = blankRow();
-bad[0] = 'SR-2026-0625182635913'; bad[3] = 'ANSHIKA SHOME'; bad[13] = 'Behala';
+bad[0] = 'SR-2026-0625182635913'; bad[3] = 'LEELA BOSE'; bad[13] = 'Behala';
 bad[15] = CENTRE;                  // Location landed in Joining Date
 bad[17] = '2026-07-01';            // Joining Date landed in Workshop Date
 bad[22] = 'Friend / Family Referral';  // Heard From landed past Notes
@@ -376,7 +376,7 @@ function mkRow() { var a = []; for (var i = 0; i < 27; i++) a.push(''); return a
 
 // Still holding the misaligned values: must refuse.
 var occupied = mkRow();
-occupied[3] = 'ANSHIKA SHOME'; occupied[22] = 'Friend / Family Referral';
+occupied[3] = 'LEELA BOSE'; occupied[22] = 'Friend / Family Referral';
 w.sheets.Enrollments = makeSheet([hd, occupied]);
 var res = w.sandbox.dropEmptyOverflowColumns();
 check('refuses while the columns still hold data', res.indexOf('REFUSED') === 0, res);
@@ -385,7 +385,7 @@ check('  ...and deletes nothing', w.sheets.Enrollments._data[0].length === 27,
 
 // After the repair they are empty: safe to drop.
 var clean = mkRow();
-clean[3] = 'ANSHIKA SHOME'; clean[19] = 'Friend / Family Referral'; clean[24] = 'Active';
+clean[3] = 'LEELA BOSE'; clean[19] = 'Friend / Family Referral'; clean[24] = 'Active';
 w.sheets.Enrollments = makeSheet([hd, clean]);
 res = w.sandbox.dropEmptyOverflowColumns();
 check('drops them once they are empty', res.indexOf('Dropped 3') === 0, res);
@@ -469,9 +469,9 @@ r = call(w, { action: 'listStudents' });
 check('listStudents needs the PIN', r.auth === true, r);
 
 call(w, { action: 'addEnrollment', pin: '1234',
-          data: enc({ mode: 'legacy', studentName: 'Krisha Agarwal', phone: '9111111111' }) });
+          data: enc({ mode: 'legacy', studentName: 'Tara Mitra', phone: '9111111111' }) });
 call(w, { action: 'addEnrollment', pin: '1234',
-          data: enc({ mode: 'legacy', studentName: 'Krisha Agarwal', phone: '9222222222' }) });
+          data: enc({ mode: 'legacy', studentName: 'Tara Mitra', phone: '9222222222' }) });
 call(w, { action: 'addEnrollment', pin: '1234',
           data: enc({ mode: 'legacy', studentName: 'Gone Away', phone: '9333333333' }) });
 var ed = w.sheets.Enrollments._data;
@@ -481,11 +481,11 @@ r = call(w, { action: 'listStudents', pin: '1234' });
 var names = (r.students || []).map(function (x) { return x.studentName; });
 check('returns the active roster', names.indexOf('Test Child') >= 0, names);
 check('a student who has left is excluded', names.indexOf('Gone Away') < 0, names);
-var krishas = (r.students || []).filter(function (x) { return x.studentName === 'Krisha Agarwal'; });
-check('both same-name students are returned', krishas.length === 2, krishas.length);
+var taras = (r.students || []).filter(function (x) { return x.studentName === 'Tara Mitra'; });
+check('both same-name students are returned', taras.length === 2, taras.length);
 check('  ...with different phones',
-      krishas.length === 2 && krishas[0].phone !== krishas[1].phone,
-      krishas.map(function (x) { return x.phone; }));
+      taras.length === 2 && taras[0].phone !== taras[1].phone,
+      taras.map(function (x) { return x.phone; }));
 
 call(w, { action: 'addEnrollment', pin: '1234',
           data: enc({ mode: 'legacy', studentName: 'Test Child', phone: '9999' }) });
@@ -497,8 +497,8 @@ console.log('');
 console.log('--- duplicate detection and clubbed-receipt coverage ---');
 w = freshWorld('1234');
 check('normName_ collapses case and stray spaces',
-      w.sandbox.normName_('ANSHIKA  SHOME') === w.sandbox.normName_('Anshika Shome'),
-      [w.sandbox.normName_('ANSHIKA  SHOME'), w.sandbox.normName_('Anshika Shome')]);
+      w.sandbox.normName_('LEELA  BOSE') === w.sandbox.normName_('Leela Bose'),
+      [w.sandbox.normName_('LEELA  BOSE'), w.sandbox.normName_('Leela Bose')]);
 
 var dh = ['ID','Enrolled At','Type','Student Name','Date of Birth','Gender',
   'Blood Group','School/College','Guardian Name','Relation','Phone','WhatsApp',
@@ -510,16 +510,16 @@ function dRow(id, name, phone, status) {
   a[21] = status || 'Active'; return a;
 }
 w.sheets.Enrollments = makeSheet([dh,
-  dRow('SR-1', 'ANSHIKA  SHOME', ''),
-  dRow('SR-2', 'Anshika Shome', ''),
-  dRow('SR-3', 'Krisha Agarwal', '9111111111'),
-  dRow('SR-4', 'Krisha Agarwal', '9222222222'),
+  dRow('SR-1', 'LEELA  BOSE', ''),
+  dRow('SR-2', 'Leela Bose', ''),
+  dRow('SR-3', 'Tara Mitra', '9111111111'),
+  dRow('SR-4', 'Tara Mitra', '9222222222'),
   dRow('SR-5', 'Diya Sen', '')
 ]);
 var dup = w.sandbox.findDuplicateStudents();
-check('the two Anshika spellings are flagged as one child',
+check('the two Leela spellings are flagged as one child',
       dup.indexOf('Likely duplicates      : 1') >= 0, dup.split('\n')[3]);
-check('the two Krishas are kept apart as real students',
+check('the two Taras are kept apart as real students',
       dup.indexOf('Same name, different people : 1') >= 0, dup.split('\n')[4]);
 
 // A sibling named only inside a clubbed receipt must not read as unpaid.
@@ -542,7 +542,7 @@ console.log('');
 console.log('--- unbilled review ---');
 w = freshWorld('1234');
 w.sheets.Enrollments = makeSheet([dh,
-  dRow('SR-1', 'Tashvi Kocahr', ''),
+  dRow('SR-1', 'Priya Sakhar', ''),
   dRow('SR-2', 'Never Paid', ''),
   dRow('SR-3', 'Diya Sen', ''),
   dRow('SR-4', 'Gone Away', '', 'Left')
@@ -550,14 +550,14 @@ w.sheets.Enrollments = makeSheet([dh,
 w.sheets.Receipts = makeSheet([
   ['Receipt No','Issued At','Student Name','Contact','Amount (₹)','Fee Month',
    'Fee Year','Payment Mode','UPI Reference','Fee Type','Date Received','Note'],
-  ['SS-1','01 Aug 2026','Tashvi Kochar','9','2000','August','2026','Cash','','Monthly Fee','',''],
+  ['SS-1','01 Aug 2026','Priya Sahkar','9','2000','August','2026','Cash','','Monthly Fee','',''],
   ['SS-2','01 Aug 2026','Riya Sen & Diya Sen','9','3000','August','2026','Cash','','Monthly Fee','','']
 ]);
 var ub = w.sandbox.reviewUnbilledStudents();
 check('a transposed surname is called a spelling difference',
       ub.indexOf('Probably a spelling difference               : 1') >= 0,
       'see the log');
-check('  ...and names the receipt spelling', ub.indexOf('tashvi kochar') >= 0, 'no suggestion');
+check('  ...and names the receipt spelling', ub.indexOf('priya sahkar') >= 0, 'no suggestion');
 check('a genuine non-payer is separated out',
       ub.indexOf('genuinely never invoiced    : 1') >= 0, 'see the log');
 check('a clubbed sibling is not listed at all',
@@ -571,7 +571,7 @@ w = freshWorld('1234');
 w.sheets.Enrollments = makeSheet([dh,
   dRow('SR-1', 'Ananya Jain', ''),
   dRow('SR-2', 'Anaaya Jain', ''),
-  dRow('SR-3', 'Tashvi Kocahr', ''),
+  dRow('SR-3', 'Priya Sakhar', ''),
   dRow('SR-4', 'Riya Sen', ''),
   dRow('SR-5', 'Diya Sen', '')
 ]);
@@ -579,14 +579,14 @@ w.sheets.Receipts = makeSheet([
   ['Receipt No','Issued At','Student Name','Contact','Amount (₹)','Fee Month',
    'Fee Year','Payment Mode','UPI Reference','Fee Type','Date Received','Note'],
   ['SS-1','01 Aug 2026','Anaaya Jain','9','2000','August','2026','Cash','','Monthly Fee','',''],
-  ['SS-2','01 Aug 2026','Tashvi Kochar','9','2000','August','2026','Cash','','Monthly Fee','',''],
+  ['SS-2','01 Aug 2026','Priya Sahkar','9','2000','August','2026','Cash','','Monthly Fee','',''],
   ['SS-3','01 Aug 2026','Riya & Diya Sen','9','3000','August','2026','Cash','','Monthly Fee','','']
 ]);
 var rv = w.sandbox.reviewUnbilledStudents();
 check('refuses to suggest another enrolled student as a typo',
       rv.indexOf('Probably a spelling difference               : 1') >= 0, 'see log');
 check('  ...and the real transposition is still caught',
-      rv.indexOf('tashvi kochar') >= 0, 'Tashvi suggestion missing');
+      rv.indexOf('priya sahkar') >= 0, 'Priya suggestion missing');
 check('  ...while Ananya is flagged as too close to call',
       rv.indexOf('Too close to another student to call         : 1') >= 0, 'see log');
 check('a shared-surname clubbed receipt covers BOTH siblings',
@@ -697,8 +697,8 @@ function rRow3(no, name, contact, amt, mon, note) {
           'Monthly Fee', '', note || '', ''];
 }
 w.sheets.Receipts = makeSheet([rhd,
-  rRow3('SS-2026-0175','Krisha Agarwal','9830014153','2000','July','Fee for July'),
-  rRow3('SS-2026-0472','Krisha Agarwal','9831439849','2400','July','Fee for July'),
+  rRow3('SS-2026-0175','Tara Mitra','9830000011','2000','July','Fee for July'),
+  rRow3('SS-2026-0472','Tara Mitra','9830000012','2400','July','Fee for July'),
   rRow3('SS-2026-0500','Solo Kid','9800000000','2000','July','Fee for July'),
   rRow3('SS-2026-0501','Solo Kid','9800000000','1800','July','Fee for July')
 ]);
@@ -711,7 +711,7 @@ check('  ...and contribute nothing to the money at stake',
 check('one family with two amounts is still flagged',
       nk.indexOf('DIFFERING AMOUNTS FOR THE SAME PERIOD') >= 0, 'see log');
 check('the contact is shown so the split is visible',
-      nk.indexOf('9830014153') >= 0 && nk.indexOf('9831439849') >= 0, 'contacts missing');
+      nk.indexOf('9830000011') >= 0 && nk.indexOf('9830000012') >= 0, 'contacts missing');
 
 console.log('');
 console.log('--- fee coverage by month ---');
@@ -746,10 +746,10 @@ w = freshWorld('1234');
 w.sheets.Enrollments = makeSheet([dh,
   cRow('SR-1', 'Riya Sen'),
   cRow('SR-2', 'Diya Sen'),
-  cRow('SR-3', 'Vani Maskara'),
-  cRow('SR-4', 'Jia Bhimani'),
-  cRow('SR-5', 'Jeena Bhimani'),
-  cRow('SR-6', 'Tashvi Kochar'),
+  cRow('SR-3', 'Asha Roy'),
+  cRow('SR-4', 'Mira Das'),
+  cRow('SR-5', 'Meera Das'),
+  cRow('SR-6', 'Priya Sahkar'),
   cRow('SR-7', 'Late Joiner', curM + ' ' + curY),
   cRow('SR-8', 'Gone Away', backLabel, 'Left', backLabel),
   cRow('SR-9', 'Workshop Only', backLabel, 'Active', '', '', 'Workshop')
@@ -758,10 +758,10 @@ w.sheets.Receipts = makeSheet([rhd,
   // Siblings clubbed onto one receipt, the modern way.
   cRcpt('SS-1', 'Riya Sen & Diya Sen', 'Riya Sen | Diya Sen', prevM, prevY),
   // The same pairing the old way: one cell, only the last child has a surname.
-  cRcpt('SS-2', 'Jia & Jeena Bhimani', '', prevM, prevY),
+  cRcpt('SS-2', 'Mira & Meera Das', '', prevM, prevY),
   // Spelled differently from the roster.
-  cRcpt('SS-3', 'Vaani Maskara', 'Vaani Maskara', prevM, prevY),
-  cRcpt('SS-4', 'Tashvi Kocahr', 'Tashvi Kocahr', prevM, prevY),
+  cRcpt('SS-3', 'Aasha Roy', 'Aasha Roy', prevM, prevY),
+  cRcpt('SS-4', 'Priya Sakhar', 'Priya Sakhar', prevM, prevY),
   // Not a month's tuition, so it must not cover anybody.
   cRcpt('SS-5', 'Late Joiner', 'Late Joiner', prevM, prevY, 'Registration Fee', '1000'),
   // A name that is on no roster row at all.
@@ -772,18 +772,18 @@ var mc = w.sandbox.feeCoverageForMonth(prevLabel);
 check('both siblings on a clubbed receipt count as paid',
       mc.indexOf('Riya Sen') > mc.indexOf('PAID (') &&
       mc.indexOf('Diya Sen') > mc.indexOf('PAID ('), 'see log');
-check('a legacy "Jia & Jeena Bhimani" cell pays for both children',
-      mc.indexOf('Jia Bhimani') > mc.indexOf('PAID (') &&
-      mc.indexOf('Jeena Bhimani') > mc.indexOf('PAID ('), 'see log');
-check('Vaani Maskara on a receipt is Vani Maskara on the roster',
-      mc.indexOf('NO RECEIPT FOR') < 0 || mc.indexOf('Vani Maskara') > mc.indexOf('PAID ('),
+check('a legacy "Mira & Meera Das" cell pays for both children',
+      mc.indexOf('Mira Das') > mc.indexOf('PAID (') &&
+      mc.indexOf('Meera Das') > mc.indexOf('PAID ('), 'see log');
+check('Aasha Roy on a receipt is Asha Roy on the roster',
+      mc.indexOf('NO RECEIPT FOR') < 0 || mc.indexOf('Asha Roy') > mc.indexOf('PAID ('),
       'see log');
 check('a one-character misspelling still counts as paid',
-      mc.indexOf('Tashvi Kochar') > mc.indexOf('PAID ('), 'see log');
+      mc.indexOf('Priya Sahkar') > mc.indexOf('PAID ('), 'see log');
 check('a registration fee does not cover the month',
       mc.indexOf('Late Joiner') < 0 || mc.indexOf('Late Joiner') > mc.indexOf('NO RECEIPT FOR'),
       'registration fee counted as monthly');
-// The six due are Riya, Diya, Vani, Jia, Jeena and Tashvi: the late joiner,
+// The six due are Riya, Diya, Vani, Mira, Meera and Priya: the late joiner,
 // the student who left and the workshop attendee are all out of scope.
 var mcPaid = mc.substring(mc.indexOf('PAID ('));
 check('a student who joins later is not due in an earlier month',
@@ -816,16 +816,16 @@ check('with every receipt name accounted for, the month reads as fully paid',
       clean.indexOf('ARE PAID FOR') >= 0,
       clean.split('\n').filter(function (l) { return l.indexOf('No receipt') >= 0; }));
 
-// Jia and Jeena are two children, not one spelled two ways.
+// Mira and Meera are two children, not one spelled two ways.
 w.sheets.Receipts = makeSheet([rhd,
-  cRcpt('SS-10', 'Jia Bhimani', 'Jia Bhimani', prevM, prevY)
+  cRcpt('SS-10', 'Mira Das', 'Mira Das', prevM, prevY)
 ]);
 var solo = w.sandbox.feeCoverageForMonth(prevLabel);
-check('Jia paying does not mark Jeena paid',
-      solo.indexOf('Jeena Bhimani') > solo.indexOf('NO RECEIPT FOR'),
-      solo.split('\n').filter(function (l) { return l.indexOf('Jeena') >= 0; }));
-check('  ...and Jia herself is still credited',
-      solo.indexOf('Jia Bhimani') > solo.indexOf('PAID ('), 'see log');
+check('Mira paying does not mark Meera paid',
+      solo.indexOf('Meera Das') > solo.indexOf('NO RECEIPT FOR'),
+      solo.split('\n').filter(function (l) { return l.indexOf('Meera') >= 0; }));
+check('  ...and Mira herself is still credited',
+      solo.indexOf('Mira Das') > solo.indexOf('PAID ('), 'see log');
 check('an incomplete month is not reported as fully paid',
       solo.indexOf('ARE PAID FOR') < 0, 'incomplete month called complete');
 
@@ -833,10 +833,10 @@ var pv = w.sandbox.previewReceiptNameMatching();
 // Scoped to the pair this fixture actually carries: the configured lists
 // describe the real sheet, not the test roster.
 check('the preview binds each configured distinct student to its own row',
-      pv.indexOf('"Jia Bhimani" -> row') >= 0 && pv.indexOf('"Jeena Bhimani" -> row') >= 0,
-      pv.split('\n').filter(function (l) { return l.indexOf('Bhimani"') >= 0; }));
+      pv.indexOf('"Mira Das" -> row') >= 0 && pv.indexOf('"Meera Das" -> row') >= 0,
+      pv.split('\n').filter(function (l) { return l.indexOf('Das"') >= 0; }));
 check('the preview shows which spelling the equivalents resolved to',
-      pv.indexOf('Vani Maskara') >= 0, 'equivalence not reported');
+      pv.indexOf('Asha Roy') >= 0, 'equivalence not reported');
 
 // A sibling who is missing from the roster must not be credited to the one
 // sibling who is on it.
@@ -861,60 +861,60 @@ console.log('--- names run together, and first names alone ---');
 // Every fixture here is a real pattern from the studio's receipts.
 w = freshWorld('1234');
 w.sheets.Enrollments = makeSheet([dh,
-  cRow('SR-1', 'Anshika Shome'),
-  cRow('SR-2', 'Anvika Shome'),
-  cRow('SR-3', 'Nyra Bharuka'),
-  cRow('SR-4', 'Nyshita Bharuka'),
-  cRow('SR-5', 'Jia Bhimani'),
-  cRow('SR-6', 'Jeena Bhimani'),
+  cRow('SR-1', 'Leela Bose'),
+  cRow('SR-2', 'Neela Bose'),
+  cRow('SR-3', 'Indra Barua'),
+  cRow('SR-4', 'Ishita Barua'),
+  cRow('SR-5', 'Mira Das'),
+  cRow('SR-6', 'Meera Das'),
   cRow('SR-7', 'Hiral Redh'),
-  cRow('SR-8', 'Jia Doshi'),
+  cRow('SR-8', 'Mira Shah'),
   cRow('SR-9', 'Solo Child')
 ]);
 w.sheets.Receipts = makeSheet([rhd,
-  cRcpt('SS-1', 'Anshika Anvika Shome', '', prevM, prevY),
-  cRcpt('SS-2', 'Nyra Nyshita Bharuka', '', prevM, prevY),
-  cRcpt('SS-3', 'Jeena Jia', '', prevM, prevY),
+  cRcpt('SS-1', 'Leela Neela Bose', '', prevM, prevY),
+  cRcpt('SS-2', 'Indra Ishita Barua', '', prevM, prevY),
+  cRcpt('SS-3', 'Meera Mira', '', prevM, prevY),
   cRcpt('SS-4', 'Hiral', '', prevM, prevY)
 ]);
 var sp = w.sandbox.previewReceiptNameMatching();
 check('two sisters written as one name are read as two children',
-      sp.indexOf('Anshika Shome  +  Anvika Shome') >= 0 ||
-      sp.indexOf('Anvika Shome  +  Anshika Shome') >= 0,
-      sp.split('\n').filter(function (l) { return l.indexOf('anshika') >= 0; }));
+      sp.indexOf('Leela Bose  +  Neela Bose') >= 0 ||
+      sp.indexOf('Neela Bose  +  Leela Bose') >= 0,
+      sp.split('\n').filter(function (l) { return l.indexOf('leela') >= 0; }));
 check('  ...and so are two more with a different surname',
-      sp.indexOf('Nyra Bharuka') >= 0 && sp.indexOf('Nyshita Bharuka') >= 0, 'see log');
-check('"Jeena Jia" with no surname at all resolves to both Bhimanis',
-      sp.indexOf('Jeena Bhimani') >= 0 && sp.indexOf('Jia Bhimani') >= 0,
+      sp.indexOf('Indra Barua') >= 0 && sp.indexOf('Ishita Barua') >= 0, 'see log');
+check('"Meera Mira" with no surname at all resolves to both Dass',
+      sp.indexOf('Meera Das') >= 0 && sp.indexOf('Mira Das') >= 0,
       sp.split('\n').filter(function (l) { return l.indexOf('jeena jia') >= 0; }));
-check('  ...and does not grab the other Jia on the roster',
-      sp.indexOf('Jia Doshi') < 0, 'the wrong Jia was credited');
+check('  ...and does not grab the other Mira on the roster',
+      sp.indexOf('Mira Shah') < 0, 'the wrong Mira was credited');
 check('a first name on its own matches the only child who answers to it',
       sp.indexOf('MATCHED ON FIRST NAME ALONE') >= 0 && sp.indexOf('Hiral Redh') >= 0,
       'see log');
 
 var spm = w.sandbox.feeCoverageForMonth(prevLabel);
-// Four receipts, seven children: two Shomes, two Bharukas, two Bhimanis, Hiral.
+// Four receipts, seven children: two Boses, two Baruas, two Dass, Hiral.
 check('all seven children named across those four receipts count as paid',
       spm.indexOf('Covered by a receipt             7') >= 0,
       spm.split('\n').filter(function (l) { return l.indexOf('Covered by') >= 0; }));
 check('  ...and the two nobody paid for are still listed',
       spm.indexOf('Solo Child') > spm.indexOf('NO RECEIPT FOR') &&
-      spm.indexOf('Jia Doshi') > spm.indexOf('NO RECEIPT FOR'), 'see log');
+      spm.indexOf('Mira Shah') > spm.indexOf('NO RECEIPT FOR'), 'see log');
 
 // A first name two children answer to is a guess, so it must not be made.
-w.sheets.Receipts = makeSheet([rhd, cRcpt('SS-5', 'Jia', '', prevM, prevY)]);
+w.sheets.Receipts = makeSheet([rhd, cRcpt('SS-5', 'Mira', '', prevM, prevY)]);
 var amb = w.sandbox.previewReceiptNameMatching();
 check('a first name two children share is credited to neither',
       amb.indexOf('MATCHED ON FIRST NAME ALONE') < 0, 'a shared first name was guessed');
 
 // Duplicate roster rows: say so, rather than just "too close to call".
 w.sheets.Enrollments = makeSheet([dh,
-  cRow('SR-1', 'Krisha Agarwal', '', 'Active', '', '9111111111'),
-  cRow('SR-2', 'Krisha Agarwal', '', 'Active', '', '9222222222')
+  cRow('SR-1', 'Tara Mitra', '', 'Active', '', '9111111111'),
+  cRow('SR-2', 'Tara Mitra', '', 'Active', '', '9222222222')
 ]);
 w.sheets.Receipts = makeSheet([rhd,
-  cRcpt('SS-6', 'Krisha Agarwal', 'Krisha Agarwal', prevM, prevY, 'Monthly Fee', '2000', '9333333333')
+  cRcpt('SS-6', 'Tara Mitra', 'Tara Mitra', prevM, prevY, 'Monthly Fee', '2000', '9333333333')
 ]);
 var why = w.sandbox.previewReceiptNameMatching();
 check('an unsplittable shared name says why it could not be called',
@@ -923,7 +923,7 @@ check('an unsplittable shared name says why it could not be called',
 
 // The contact number on the receipt is enough to tell them apart.
 w.sheets.Receipts = makeSheet([rhd,
-  cRcpt('SS-7', 'Krisha Agarwal', 'Krisha Agarwal', prevM, prevY, 'Monthly Fee', '2000', '9222222222')
+  cRcpt('SS-7', 'Tara Mitra', 'Tara Mitra', prevM, prevY, 'Monthly Fee', '2000', '9222222222')
 ]);
 var byph = w.sandbox.previewReceiptNameMatching();
 check('  ...but a matching contact number does tell them apart',
@@ -931,28 +931,28 @@ check('  ...but a matching contact number does tell them apart',
 
 console.log('');
 console.log('--- a near-miss between two real children ---');
-// 'Janvi Jain' is one character from both Jahnvi and Janhvi, who are two
+// 'Rohni Pal' is one character from both Rohini and Rohnii, who are two
 // different children. Nothing but a contact number can settle it.
 w = freshWorld('1234');
 w.sheets.Enrollments = makeSheet([dh,
-  cRow('SR-1', 'Jahnvi Jain', '', 'Active', '', '9111111111'),
-  cRow('SR-2', 'Janhvi Jain', '', 'Active', '', '9222222222')
+  cRow('SR-1', 'Rohini Pal', '', 'Active', '', '9111111111'),
+  cRow('SR-2', 'Rohnii Pal', '', 'Active', '', '9222222222')
 ]);
 w.sheets.Receipts = makeSheet([rhd,
-  cRcpt('SS-1', 'Janvi Jain', 'Janvi Jain', prevM, prevY, 'Monthly Fee', '2000', '9000000009')
+  cRcpt('SS-1', 'Rohni Pal', 'Rohni Pal', prevM, prevY, 'Monthly Fee', '2000', '9000000009')
 ]);
 var tie = w.sandbox.previewReceiptNameMatching();
 check('a name one character from two children is credited to neither',
       tie.indexOf('TOO CLOSE TO CALL               1') >= 0,
       tie.split('\n').filter(function (l) { return l.indexOf('TOO CLOSE') >= 0; }));
 check('  ...and both candidates are named with their rows',
-      tie.indexOf('Jahnvi Jain') >= 0 && tie.indexOf('Janhvi Jain') >= 0 &&
+      tie.indexOf('Rohini Pal') >= 0 && tie.indexOf('Rohnii Pal') >= 0 &&
       tie.indexOf('row 2') >= 0 && tie.indexOf('row 3') >= 0,
       tie.split('\n').filter(function (l) { return l.indexOf('why:') >= 0; }));
 
 // The same receipt, now carrying one family's number.
 w.sheets.Receipts = makeSheet([rhd,
-  cRcpt('SS-2', 'Janvi Jain', 'Janvi Jain', prevM, prevY, 'Monthly Fee', '2000', '9222222222')
+  cRcpt('SS-2', 'Rohni Pal', 'Rohni Pal', prevM, prevY, 'Monthly Fee', '2000', '9222222222')
 ]);
 var settled = w.sandbox.previewReceiptNameMatching();
 check('a contact number settles the tie',
@@ -960,15 +960,15 @@ check('a contact number settles the tie',
       settled.indexOf('TOO CLOSE TO CALL               0') >= 0,
       settled.split('\n').filter(function (l) { return l.indexOf('janvi') >= 0; }));
 check('  ...to the family whose number it is',
-      settled.indexOf('-> Janhvi Jain') >= 0, 'credited to the wrong child');
+      settled.indexOf('-> Rohnii Pal') >= 0, 'credited to the wrong child');
 
 // The month must NOT be used to break a tie the name itself cannot settle.
 w.sheets.Enrollments = makeSheet([dh,
-  cRow('SR-1', 'Jahnvi Jain', backLabel, 'Left', backLabel, '9111111111'),
-  cRow('SR-2', 'Janhvi Jain', '', 'Active', '', '9222222222')
+  cRow('SR-1', 'Rohini Pal', backLabel, 'Left', backLabel, '9111111111'),
+  cRow('SR-2', 'Rohnii Pal', '', 'Active', '', '9222222222')
 ]);
 w.sheets.Receipts = makeSheet([rhd,
-  cRcpt('SS-3', 'Janvi Jain', 'Janvi Jain', prevM, prevY, 'Monthly Fee', '2000', '')
+  cRcpt('SS-3', 'Rohni Pal', 'Rohni Pal', prevM, prevY, 'Monthly Fee', '2000', '')
 ]);
 var noguess = w.sandbox.previewReceiptNameMatching();
 check('one child having left does not settle a spelling tie',
@@ -2102,14 +2102,14 @@ check('  ...and such a hold does NOT settle the one-off fee',
       'a tuition hold wrongly waived the show fee');
 
 // Two children, one name — settled by the contact number on the receipt
-// itself. This is the Krisha Agarwal case: the evidence was in the same row.
+// itself. This is the Tara Mitra case: the evidence was in the same row.
 w = freshWorld('1234');
-var kA = dRow('SR-K1', 'Krisha Agarwal', '9830014153'); kA[15] = 'January 2026';
-var kB = dRow('SR-K2', 'Krisha Agarwal', '9831439849'); kB[15] = 'January 2026';
+var kA = dRow('SR-K1', 'Tara Mitra', '9830000011'); kA[15] = 'January 2026';
+var kB = dRow('SR-K2', 'Tara Mitra', '9830000012'); kB[15] = 'January 2026';
 w.sheets.Enrollments = makeSheet([dh, kA, kB]);
 w.sheets.Receipts = makeSheet([rhd,
-  ['SS-K1', '01 Sep 2026', 'Krisha Agarwal', '9830014153', '2400', 'September', '2026',
-   'Cash', '', SHOW, '', '', 'Krisha Agarwal']]);
+  ['SS-K1', '01 Sep 2026', 'Tara Mitra', '9830000011', '2400', 'September', '2026',
+   'Cash', '', SHOW, '', '', 'Tara Mitra']]);
 var rk = w.sandbox.oneOffFeeStatus_(SHOW, 2026);
 check('a shared name is settled by the receipt contact',
       rk.resolvedByPhone.length === 1 && rk.ambiguousName.length === 0,

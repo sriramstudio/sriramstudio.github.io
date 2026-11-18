@@ -80,7 +80,7 @@ is('  ...offered only for the sibling who has none',
    p && p.students.map(function (x) { return x.name; }), ['Dev']);
 is('  ...and flagged as coming from the sibling', p && p.fromSibling, true);
 
-api.set([S('Krisha A', '9830792201'), S('Krisha B', '9000000000')]); api.sync();
+api.set([S('Tara A', '9830792201'), S('Tara B', '9000000000')]); api.sync();
 is('two different numbers: the first is kept',
    els['r-phone'].value, '9830792201');
 is('  ...Anjali is warned',

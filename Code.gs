@@ -1608,7 +1608,7 @@ function backfillJoiningMonth() {
 // Runs inside the sheet and reports aggregates only, so no student's personal
 // details need to leave it. Writes nothing.
 
-// "ANSHIKA  SHOME" and "Anshika Shome" are the same child. Lowercasing alone
+// "LEELA  BOSE" and "Leela Bose" are the same child. Lowercasing alone
 // misses that — the double space has to go too.
 // A clubbed receipt often shares the surname: "Riya & Diya Sen" names both
 // children, but only "diya sen" appears as a contiguous run. Treat every word
@@ -1867,8 +1867,8 @@ function analyticsReport() {
 
 
 // ─── Duplicate students (read-only, editor only) ──────────────
-// The roster import matched on a lowercased name, so "ANSHIKA  SHOME" and
-// "Anshika Shome" were treated as different people and both were kept.
+// The roster import matched on a lowercased name, so "LEELA  BOSE" and
+// "Leela Bose" were treated as different people and both were kept.
 // Reports only — genuinely different students do share names, so nothing is
 // merged automatically.
 
@@ -3291,7 +3291,7 @@ function buildFeeCoverage_() {
     }
 
     const fuzzy = fuzzyResolve_(key, byKey, rosterKeys, pinGroup, fragment);
-    // A near-miss sitting the same distance from two children — 'Janvi Jain'
+    // A near-miss sitting the same distance from two children — 'Rohni Pal'
     // between two near-identical spellings of two different children. A
     // settles it. The month is not: the name matches neither child exactly, so
     // picking whichever happens to be enrolled would be a guess.
@@ -3321,7 +3321,7 @@ function buildFeeCoverage_() {
   }
 
   // Several children written into one name with no separator at all:
-  // 'Anshika Anvika Shome' is two sisters, 'Jeena Jia' is two more with the
+  // 'Leela Neela Bose' is two sisters, 'Meera Mira' is two more with the
   // surname left off entirely. Only accepted when it yields two or more
   // different children, which a single mangled name never does.
   const readSiblings_ = function (fragment, contact, period) {
